@@ -2,6 +2,8 @@ import os
 import streamlit as st
 from config.conexion import obtener_conexion
 
+NOMBRE_LOGO = "Logo prueba.jpeg"
+
 def verificar_usuario(correo, contrasena):
     conexion = obtener_conexion()
     if conexion is None:
@@ -31,9 +33,9 @@ def verificar_usuario(correo, contrasena):
             conexion.close()
 
 def mostrar_logo():
-    # Busca logo.png en la raíz del proyecto (una carpeta arriba de modulos)
+    # El logo está en la raíz del proyecto (una carpeta arriba de modulos)
     carpeta_raiz = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    ruta_logo = os.path.join(carpeta_raiz, "logo.png")
+    ruta_logo = os.path.join(carpeta_raiz, NOMBRE_LOGO)
 
     if os.path.exists(ruta_logo):
         col1, col2, col3 = st.columns([1, 1, 1])
@@ -41,18 +43,9 @@ def mostrar_logo():
             st.image(ruta_logo, use_container_width=True)
     else:
         st.warning(f"No se encontró la imagen en: {ruta_logo}")
+        st.write("Archivos en la raíz:", os.listdir(carpeta_raiz))
 
 def login():
-    # ---- Líneas de prueba (bórralas cuando todo funcione) ----
-    st.write("VERSIÓN NUEVA")
-    st.write("Carpeta actual:", os.getcwd())
-    st.write("Archivos:", os.listdir("."))
-    if os.path.exists("logo.png"):
-        st.write("logo.png existe, tamaño (bytes):", os.path.getsize("logo.png"))
-    else:
-        st.write("logo.png NO existe en la carpeta actual")
-    # ----------------------------------------------------------
-
     mostrar_logo()
 
     st.title("Inicio de sesión")
