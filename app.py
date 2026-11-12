@@ -1,5 +1,8 @@
+import os
 import mysql.connector
 import streamlit as st
+
+NOMBRE_LOGO = "Logo prueba.jpeg"
 
 
 def obtener_conexion():
@@ -48,7 +51,23 @@ def verificar_usuario(correo, contrasena):
             conexion.close()
 
 
+def mostrar_logo():
+    # El logo está en la misma carpeta que app.py
+    carpeta = os.path.dirname(os.path.abspath(__file__))
+    ruta_logo = os.path.join(carpeta, NOMBRE_LOGO)
+
+    if os.path.exists(ruta_logo):
+        col1, col2, col3 = st.columns([1, 1, 1])
+        with col2:
+            st.image(ruta_logo, use_container_width=True)
+    else:
+        st.warning(f"No se encontró la imagen en: {ruta_logo}")
+        st.write("Archivos en la carpeta:", os.listdir(carpeta))
+
+
 def login():
+    mostrar_logo()
+
     st.title("Inicio de sesión")
     correo = st.text_input("Correo")
     contrasena = st.text_input(
