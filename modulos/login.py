@@ -1,7 +1,7 @@
 def login():
     col1, col2, col3 = st.columns([1, 1, 1])
     with col2:
-        st.image("imagenes/logo.jpeg", use_container_width=True)
+        st.image("logo.png", use_container_width=True)
 
     st.title("Inicio de sesión")
     correo = st.text_input("Correo")
