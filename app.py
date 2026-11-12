@@ -55,3 +55,17 @@ finally:
     if "conn" in locals() and conn.is_connected(): 
 
         conn.close() 
+
+
+from login import login
+
+if not st.session_state.get("sesion_iniciada"):
+    login()
+    st.stop()
+
+st.title("Bienvenido")
+st.write(f"Sesión iniciada con: {st.session_state['usuario']}")
+
+if st.button("Cerrar sesión"):
+    st.session_state.clear()
+    st.rerun()
