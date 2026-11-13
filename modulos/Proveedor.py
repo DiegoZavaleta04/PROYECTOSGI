@@ -4,6 +4,47 @@ from config.conexion import obtener_conexion
 
 
 # ==============================
+# PERMISOS (AJUSTAR A TU PROYECTO)
+# ==============================
+# Claves de st.session_state donde guardas los datos del usuario
+# al iniciar sesion. Cambialas si en tu login se llaman distinto.
+CLAVE_ROL = "rol"
+CLAVE_SEDE = "id_sede"
+
+# Nombres de rol (se comparan en minusculas, sin espacios al inicio/fin)
+ROL_VENDEDOR = "vendedor"
+ROL_ENCARGADO = "encargado"
+
+# Roles que ven todas las sedes (opcional). Deja la lista vacia
+# si no existe un rol administrador.
+ROLES_TODAS_LAS_SEDES = ["administrador"]
+
+
+def obtener_permisos():
+    """
+    Devuelve (id_sede, puede_ver_todas, puede_editar).
+
+    - Vendedor: solo ve los proveedores de su sede (CD o tienda).
+    - Encargado: ve y modifica solo los proveedores de su sede.
+    - Administrador (si existe): ve y modifica todo.
+    """
+    rol = str(st.session_state.get(CLAVE_ROL, "")).strip().lower()
+    id_sede = st.session_state.get(CLAVE_SEDE)
+
+    if rol in ROLES_TODAS_LAS_SEDES:
+        return None, True, True
+
+    if rol == ROL_ENCARGADO and id_sede is not None:
+        return id_sede, False, True
+
+    if rol == ROL_VENDEDOR and id_sede is not None:
+        return id_sede, False, False
+
+    # Rol desconocido o sin sede asignada: sin acceso
+    return None, False, False
+
+
+# ==============================
 # FUNCIONES DE BASE DE DATOS
 # ==============================
 def consultar(consulta, parametros=()):
@@ -39,6 +80,7 @@ def consultar(consulta, parametros=()):
 
 
 def ejecutar(consulta, parametros=()):
+    """Devuelve (exito, filas_afectadas)."""
     conexion = None
     cursor = None
 
@@ -46,13 +88,14 @@ def ejecutar(consulta, parametros=()):
         conexion = obtener_conexion()
 
         if conexion is None:
-            return False
+            return False, 0
 
         cursor = conexion.cursor()
         cursor.execute(consulta, parametros)
+        filas = cursor.rowcount
         conexion.commit()
 
-        return True
+        return True, filas
 
     except Exception as error:
         if conexion is not None:
@@ -61,7 +104,7 @@ def ejecutar(consulta, parametros=()):
         st.error(
             f"Error al guardar los datos: {error}"
         )
-        return False
+        return False, 0
 
     finally:
         if cursor is not None:
@@ -74,9 +117,15 @@ def ejecutar(consulta, parametros=()):
             conexion.close()
 
 
-def obtener_sedes():
+def obtener_sedes(id_sede=None):
     return consultar(
-        "SELECT id_sede, nombre FROM Sede ORDER BY nombre"
+        """
+        SELECT id_sede, nombre
+        FROM Sede
+        WHERE (%s IS NULL OR id_sede = %s)
+        ORDER BY nombre
+        """,
+        (id_sede, id_sede)
     )
 
 
@@ -144,12 +193,22 @@ def validar_datos(nombre, documento, telefono):
 def mostrar_proveedor():
     st.header("Gestión de proveedores")
 
+    # ---- Permisos del usuario actual ----
+    sede_usuario, ve_todas, puede_editar = obtener_permisos()
+
+    if not ve_todas and sede_usuario is None:
+        st.error(
+            "No tiene permisos para ver los proveedores."
+        )
+        return
+
     # Mensaje que se guarda antes de recargar la página
     mensaje = st.session_state.pop("mensaje_proveedor", None)
     if mensaje:
         st.success(mensaje)
 
-    sedes = obtener_sedes()
+    # Si no ve todas las sedes, solo se carga la suya
+    sedes = obtener_sedes(None if ve_todas else sede_usuario)
 
     if not sedes:
         st.warning(
@@ -171,19 +230,29 @@ def mostrar_proveedor():
         )
 
     with col2:
-        opciones_filtro = {"Todas las sedes": None}
+        if ve_todas:
+            opciones_filtro = {"Todas las sedes": None}
 
-        for sede in sedes:
-            opciones_filtro[sede[1]] = sede[0]
+            for sede in sedes:
+                opciones_filtro[sede[1]] = sede[0]
 
-        sede_filtro = st.selectbox(
-            "Filtrar por sede",
-            list(opciones_filtro.keys())
-        )
+            sede_filtro = st.selectbox(
+                "Filtrar por sede",
+                list(opciones_filtro.keys())
+            )
+            id_sede_filtro = opciones_filtro[sede_filtro]
+        else:
+            # Usuario de una sola sede: filtro fijo
+            st.text_input(
+                "Sede",
+                value=sedes[0][1],
+                disabled=True
+            )
+            id_sede_filtro = sede_usuario
 
     proveedores = obtener_proveedores(
         busqueda,
-        opciones_filtro[sede_filtro]
+        id_sede_filtro
     )
 
     if proveedores:
@@ -211,6 +280,10 @@ def mostrar_proveedor():
         st.info(
             "No se encontraron proveedores."
         )
+
+    # El vendedor solo puede consultar, aqui termina su pantalla
+    if not puede_editar:
+        return
 
     st.divider()
 
@@ -255,21 +328,26 @@ def mostrar_proveedor():
         if error_validacion:
             st.warning(error_validacion)
         else:
+            # Seguridad: el encargado siempre guarda en su propia sede
+            id_sede_guardar = sede[0] if ve_todas else sede_usuario
+
             consulta = """
             INSERT INTO PROVEEDORES
             (Nombre, DUI_NIT, Telefono, Id_sede)
             VALUES (%s, %s, %s, %s)
             """
 
-            if ejecutar(
+            exito, _ = ejecutar(
                 consulta,
                 (
                     nombre.strip(),
                     documento.strip(),
                     telefono.strip() or None,
-                    sede[0]
+                    id_sede_guardar
                 )
-            ):
+            )
+
+            if exito:
                 st.session_state["mensaje_proveedor"] = (
                     "Proveedor registrado correctamente."
                 )
@@ -282,7 +360,10 @@ def mostrar_proveedor():
     # -----------------------------------
     st.subheader("Editar proveedor")
 
-    todos = obtener_proveedores()
+    todos = obtener_proveedores(
+        "",
+        None if ve_todas else sede_usuario
+    )
 
     if not todos:
         st.info(
@@ -328,7 +409,8 @@ def mostrar_proveedor():
             "Sede",
             sedes,
             index=indice_sede,
-            format_func=lambda s: s[1]
+            format_func=lambda s: s[1],
+            disabled=not ve_todas
         )
 
         actualizar = st.form_submit_button(
@@ -345,6 +427,10 @@ def mostrar_proveedor():
         if error_validacion:
             st.warning(error_validacion)
         else:
+            # Seguridad: el encargado no puede mover proveedores a otra sede
+            id_sede_guardar = nueva_sede[0] if ve_todas else sede_usuario
+
+            # Seguridad extra: el WHERE tambien limita por sede
             consulta = """
             UPDATE PROVEEDORES
             SET Nombre = %s,
@@ -352,19 +438,31 @@ def mostrar_proveedor():
                 Telefono = %s,
                 Id_sede = %s
             WHERE Id_proveedor = %s
+              AND (%s IS NULL OR Id_sede = %s)
             """
 
-            if ejecutar(
+            sede_restriccion = None if ve_todas else sede_usuario
+
+            exito, filas = ejecutar(
                 consulta,
                 (
                     nuevo_nombre.strip(),
                     nuevo_documento.strip(),
                     nuevo_telefono.strip() or None,
-                    nueva_sede[0],
-                    proveedor[0]
+                    id_sede_guardar,
+                    proveedor[0],
+                    sede_restriccion,
+                    sede_restriccion
                 )
-            ):
+            )
+
+            if exito and filas > 0:
                 st.session_state["mensaje_proveedor"] = (
                     "Proveedor actualizado correctamente."
                 )
                 st.rerun()
+            elif exito:
+                st.warning(
+                    "No se modificó ningún registro "
+                    "(sin cambios o sin permiso)."
+                )
