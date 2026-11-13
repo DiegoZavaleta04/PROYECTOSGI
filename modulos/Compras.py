@@ -224,17 +224,27 @@ def registrar_compra(
                     (linea["cantidad"], id_compra, registro[0])
                 )
             else:
+                # --- LINEAS A MODIFICAR (A partir de aquí) ---
+                # 1. Buscamos el Id_unidad que le pertenece al producto
+                cursor.execute(
+                    "SELECT Id_unidad FROM PRODUCTOS WHERE Id_producto = %s LIMIT 1",
+                    (linea["id_producto"],)
+                )
+                id_unidad_producto = cursor.fetchone()[0] # Obtenemos el número del ID
+
+                # 2. Insertamos en INVENTARIO incluyendo la columna Id_unidad
                 cursor.execute(
                     """
                     INSERT INTO INVENTARIO
-                    (Id_producto, Existencia, Id_compra, Id_sede)
-                    VALUES (%s, %s, %s, %s)
+                    (Id_producto, Existencia, Id_compra, Id_sede, Id_unidad)
+                    VALUES (%s, %s, %s, %s, %s)
                     """,
                     (
                         linea["id_producto"],
                         linea["cantidad"],
                         id_compra,
-                        id_sede
+                        id_sede,
+                        id_unidad_producto  # <-- El valor que faltaba
                     )
                 )
 
