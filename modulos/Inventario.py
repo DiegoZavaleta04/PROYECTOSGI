@@ -211,23 +211,30 @@ def aplicar_movimiento(tipo, id_producto, id_sede, cantidad):
 
     # Ajuste: deja la existencia con el valor indicado
     if registro:
-        filas = ejecutar(
+        curso.execute(
             """
             UPDATE INVENTARIO
-            SET Existencia = %s
+            SET Existencia = Existencia + %s
+            Id_compra= %s
             WHERE Id_inventario = %s
             """,
-            (cantidad, registro[0][0])
+            (linea["cantidad"],id_compra, registro[0])
         )
     else:
-        filas = ejecutar(
+        cursor.execute(
             """
             INSERT INTO INVENTARIO
-            (Id_producto, Existencia, Id_sede)
-            VALUES (%s, %s, %s)
+            (Id_producto, Existencia, Id_compra, Id_sede)
+            VALUES (%s, %s, %s, %s)
             """,
-            (id_producto, cantidad, id_sede)
+            (
+                linea["id_producto"],
+                linea["cantidad"],
+                id_compraa,
+                id_sede
+            )
         )
+        conexion.comit()
 
     if filas is None:
         return False, None
