@@ -324,4 +324,47 @@ def mostrar_proveedor():
             max_chars=20
         )
 
-        nueva_sede = st.selectbox(
+                nueva_sede = st.selectbox(
+            "Sede",
+            sedes,
+            index=indice_sede,
+            format_func=lambda s: s[1]
+        )
+
+        actualizar = st.form_submit_button(
+            "Guardar cambios"
+        )
+
+    if actualizar:
+        error_validacion = validar_datos(
+            nuevo_nombre,
+            nuevo_documento,
+            nuevo_telefono
+        )
+
+        if error_validacion:
+            st.warning(error_validacion)
+        else:
+            consulta = """
+            UPDATE PROVEEDORES
+            SET Nombre = %s,
+                DUI_NIT = %s,
+                Telefono = %s,
+                Id_sede = %s
+            WHERE Id_proveedor = %s
+            """
+
+            if ejecutar(
+                consulta,
+                (
+                    nuevo_nombre.strip(),
+                    nuevo_documento.strip(),
+                    nuevo_telefono.strip() or None,
+                    nueva_sede[0],
+                    proveedor[0]
+                )
+            ):
+                st.session_state["mensaje_proveedor"] = (
+                    "Proveedor actualizado correctamente."
+                )
+                st.rerun()
