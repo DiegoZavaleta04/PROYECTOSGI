@@ -34,7 +34,7 @@ def verificar_usuario(correo, contrasena):
     try:
         cursor = conexion.cursor()
         consulta = """
-        SELECT Id_usuario, Estado
+        SELECT Id_usuario, Estado, Id_rol, Id_sede
         FROM USUARIO
         WHERE Correo = %s AND Contrasena = %s
         LIMIT 1
@@ -94,6 +94,8 @@ def login():
                 if estado in ("1", "activo", "true"):
                     st.session_state["sesion_iniciada"] = True
                     st.session_state["usuario"] = correo
+                    st.session_state["id_rol"] = resultado[2]
+                    st.session_state["id_sede"] = resultado[3]
                     st.rerun()
                 else:
                     st.error(
@@ -131,37 +133,30 @@ def cargar_modulo(nombre_archivo, nombre_funcion):
 
 def mostrar_informacion():
     st.header("Información del sistema")
-    st.write(
-        "Aplicación desarrollada durante "
-        "el Laboratorio de SGI."
-    )
 
 
 # ==============================================================
 # >>>>>>>>>>  AQUÍ SE AGREGAN LOS NUEVOS MÓDULOS  <<<<<<<<<<
 #
 # Formato:
-#   "Nombre que se ve en el menú": función
+#   "Nombre que se ve en el menú": cargar_modulo("archivo", "funcion")
 #
-# Para módulos que están en la carpeta modulos/:
-#   "Nombre": cargar_modulo("nombre_del_archivo", "nombre_de_la_funcion")
+# "archivo" es el nombre del .py dentro de modulos/ (sin el .py),
+# escrito igual que en GitHub (mayúsculas incluidas).
+# "funcion" es la función que dibuja la pantalla en ese archivo.
 #
-# Ejemplo: si creas modulos/inventario.py con la función
-# mostrar_inventario(), agrega esta línea:
-#   "Inventario": cargar_modulo("inventario", "mostrar_inventario"),
-#
-# Eso es todo: el menú se arma solo a partir de este diccionario.
+# Ejemplo: si creas modulos/Compras.py con la función
+# mostrar_compra(), agrega esta línea:
+#   "Compras": cargar_modulo("Compras", "mostrar_compra"),
 # ==============================================================
 MODULOS = {
     "Ventas": cargar_modulo("ventas", "mostrar_venta"),
-    "Empleados": cargar_modulo("empleados", "mostrar_empleado"),
     "Productos": cargar_modulo("Producto", "render"),
     "Proveedores": cargar_modulo("Proveedor", "mostrar_proveedor"),
     "Empleados": cargar_modulo("Empleado", "mostrar_empleado"),
     "Inventario": cargar_modulo("Inventario", "mostrar_inventario"),
-    # "Inventario": cargar_modulo("inventario", "mostrar_inventario"),
-    # "Compras": cargar_modulo("compras", "mostrar_compra"),
-    # "Clientes": cargar_modulo("clientes", "mostrar_cliente"),
+    # "Compras": cargar_modulo("Compras", "mostrar_compra"),
+    # "Clientes": cargar_modulo("Clientes", "mostrar_cliente"),
     "Información": mostrar_informacion,
 }
 
@@ -175,6 +170,12 @@ if "sesion_iniciada" not in st.session_state:
 
 if "usuario" not in st.session_state:
     st.session_state["usuario"] = ""
+
+if "id_rol" not in st.session_state:
+    st.session_state["id_rol"] = None
+
+if "id_sede" not in st.session_state:
+    st.session_state["id_sede"] = None
 
 # Comprobar si el usuario inició sesión
 if st.session_state["sesion_iniciada"]:
@@ -203,6 +204,8 @@ if st.session_state["sesion_iniciada"]:
     if st.sidebar.button("Cerrar sesión"):
         st.session_state["sesion_iniciada"] = False
         st.session_state["usuario"] = ""
+        st.session_state["id_rol"] = None
+        st.session_state["id_sede"] = None
         st.rerun()
 
 else:
