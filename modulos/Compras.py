@@ -92,7 +92,7 @@ def obtener_compras(busqueda="", id_proveedor=None, id_sede=None):
         s.nombre,
         CONCAT(u.Nombre, ' ', u.Apellido),
         c.Metodo_pago,
-        COALESCE(SUM(d.Cantidad * d.Precio_unitario), 0)
+        COALESCE(SUM(d.Cantidad * d.precio_compra), 0)
     FROM COMPRAS c
     INNER JOIN PROVEEDORES pr
         ON c.Id_proveedor = pr.Id_proveedor
@@ -189,7 +189,7 @@ def registrar_compra(
             cursor.execute(
                 """
                 INSERT INTO DETALLE_COMPRA
-                (Id_compra, Id_producto, Cantidad, Precio_unitario)
+                (Id_compra, Id_producto, Cantidad, precio_compra)
                 VALUES (%s, %s, %s, %s)
                 """,
                 (
