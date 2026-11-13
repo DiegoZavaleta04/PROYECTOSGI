@@ -1,6 +1,6 @@
 
 import mysql.connector
-from conexion import obtener_conexion
+from config.conexion import obtener_conexion
 
 
 class ErrorProducto(Exception):
