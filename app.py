@@ -118,11 +118,14 @@ def cargar_modulo(nombre_archivo, nombre_funcion):
         modulo = importlib.import_module(f"modulos.{nombre_archivo}")
         return getattr(modulo, nombre_funcion)
     except Exception as error:
+        mensaje = (
+            f"No se pudo cargar modulos/{nombre_archivo}.py "
+            f"(función {nombre_funcion}): {error}"
+        )
+
         def aviso():
-            st.warning(
-                f"No se pudo cargar modulos/{nombre_archivo}.py "
-                f"(función {nombre_funcion}): {error}"
-            )
+            st.warning(mensaje)
+
         return aviso
 
 
