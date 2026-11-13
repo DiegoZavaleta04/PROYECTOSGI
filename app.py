@@ -1,7 +1,8 @@
+
 import os
 import mysql.connector
 import streamlit as st
-from modulos.Producto import mostrar_productos
+from modulos.Producto import render
 
 NOMBRE_LOGO = "Logo prueba.jpeg"
 
@@ -121,9 +122,10 @@ else:
         st.write("Bienvenido al Sistema de Gestión de Información.")
 
     elif opcion == "Productos":
-        mostrar_productos()
+        render()
 
     # Cerrar sesión
     if st.sidebar.button("Cerrar sesión"):
         st.session_state.clear()
         st.rerun()
+
