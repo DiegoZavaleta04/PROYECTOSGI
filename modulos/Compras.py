@@ -61,7 +61,7 @@ def obtener_sedes():
 def obtener_productos():
     return consultar(
         """
-        SELECT p.Id_producto, p.Nombre, u.Abreviatura
+        SELECT p.Id_producto, p.Nombre, u.Abreviatura, p.Id_unidad 
         FROM PRODUCTOS p
         INNER JOIN UNIDAD_MEDIDA u
             ON p.Id_unidad = u.Id_unidad
