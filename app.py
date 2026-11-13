@@ -1,12 +1,14 @@
-
 import os
+import importlib
 import mysql.connector
 import streamlit as st
-from modulos.Producto import render
 
 NOMBRE_LOGO = "Logo prueba.jpeg"
 
 
+# ==============================
+# CONEXIÓN Y LOGIN
+# ==============================
 def obtener_conexion():
     try:
         conexion = mysql.connector.connect(
@@ -53,18 +55,19 @@ def verificar_usuario(correo, contrasena):
             conexion.close()
 
 
-def mostrar_logo():
-    # El logo está en la misma carpeta que app.py
+def obtener_ruta_logo():
     carpeta = os.path.dirname(os.path.abspath(__file__))
-    ruta_logo = os.path.join(carpeta, NOMBRE_LOGO)
+    return os.path.join(carpeta, NOMBRE_LOGO)
 
+
+def mostrar_logo():
+    ruta_logo = obtener_ruta_logo()
     if os.path.exists(ruta_logo):
         col1, col2, col3 = st.columns([1, 1, 1])
         with col2:
             st.image(ruta_logo, use_container_width=True)
     else:
         st.warning(f"No se encontró la imagen en: {ruta_logo}")
-        st.write("Archivos en la carpeta:", os.listdir(carpeta))
 
 
 def login():
@@ -102,30 +105,99 @@ def login():
                 )
 
 
-# ---- Flujo principal ----
-if not st.session_state.get("sesion_iniciada"):
-    login()
-else:
-    st.title("Bienvenido")
-    st.write(f"Sesión iniciada con: {st.session_state['usuario']}")
+# ==============================
+# CARGA SEGURA DE MÓDULOS
+# ==============================
+def cargar_modulo(nombre_archivo, nombre_funcion):
+    """
+    Importa modulos/<nombre_archivo>.py y devuelve la función indicada.
+    Si el archivo o la función no existen (o tienen un error), devuelve
+    una función que muestra un aviso en pantalla, así la app NO se cae.
+    """
+    try:
+        modulo = importlib.import_module(f"modulos.{nombre_archivo}")
+        return getattr(modulo, nombre_funcion)
+    except Exception as error:
+        def aviso():
+            st.warning(
+                f"No se pudo cargar modulos/{nombre_archivo}.py "
+                f"(función {nombre_funcion}): {error}"
+            )
+        return aviso
 
-    # Menú principal
-    st.sidebar.title("Menú principal")
 
-    opcion = st.sidebar.radio(
-        "Seleccione un módulo:",
-        ["Inicio", "Productos"]
+def mostrar_informacion():
+    st.header("Información del sistema")
+    st.write(
+        "Aplicación desarrollada durante "
+        "el Laboratorio de SGI."
     )
 
-    if opcion == "Inicio":
-        st.subheader("Inicio")
-        st.write("Bienvenido al Sistema de Gestión de Información.")
 
-    elif opcion == "Productos":
-        render()
+# ==============================================================
+# >>>>>>>>>>  AQUÍ SE AGREGAN LOS NUEVOS MÓDULOS  <<<<<<<<<<
+#
+# Formato:
+#   "Nombre que se ve en el menú": función
+#
+# Para módulos que están en la carpeta modulos/:
+#   "Nombre": cargar_modulo("nombre_del_archivo", "nombre_de_la_funcion")
+#
+# Ejemplo: si creas modulos/inventario.py con la función
+# mostrar_inventario(), agrega esta línea:
+#   "Inventario": cargar_modulo("inventario", "mostrar_inventario"),
+#
+# Eso es todo: el menú se arma solo a partir de este diccionario.
+# ==============================================================
+MODULOS = {
+    "Ventas": cargar_modulo("ventas", "mostrar_venta"),
+    "Empleados": cargar_modulo("empleados", "mostrar_empleado"),
+    # "Inventario": cargar_modulo("inventario", "mostrar_inventario"),
+    # "Compras": cargar_modulo("compras", "mostrar_compra"),
+    # "Clientes": cargar_modulo("clientes", "mostrar_cliente"),
+    "Información": mostrar_informacion,
+}
+
+
+# ==============================
+# FLUJO PRINCIPAL
+# ==============================
+# Inicializar variables de sesión
+if "sesion_iniciada" not in st.session_state:
+    st.session_state["sesion_iniciada"] = False
+
+if "usuario" not in st.session_state:
+    st.session_state["usuario"] = ""
+
+# Comprobar si el usuario inició sesión
+if st.session_state["sesion_iniciada"]:
+
+    # Logo en el menú lateral
+    ruta_logo = obtener_ruta_logo()
+    if os.path.exists(ruta_logo):
+        st.sidebar.image(ruta_logo, use_container_width=True)
+
+    st.sidebar.title("Menú")
+
+    st.sidebar.write(
+        f"Usuario: {st.session_state['usuario']}"
+    )
+
+    # Las opciones salen automáticamente del diccionario MODULOS
+    seleccion = st.sidebar.selectbox(
+        "Seleccione una opción",
+        list(MODULOS.keys())
+    )
+
+    # Mostrar el módulo elegido
+    MODULOS[seleccion]()
 
     # Cerrar sesión
     if st.sidebar.button("Cerrar sesión"):
-        st.session_state.clear()
+        st.session_state["sesion_iniciada"] = False
+        st.session_state["usuario"] = ""
         st.rerun()
 
+else:
+    # Si no hay sesión iniciada, mostrar login
+    login()
