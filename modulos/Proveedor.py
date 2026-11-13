@@ -12,9 +12,10 @@ CLAVE_ROL = "rol"
 CLAVE_SEDE = "id_sede"
 
 # Nombres de rol (se comparan en minusculas, sin espacios al inicio/fin)
-ROL_VENDEDOR = "vendedor"
-ROL_ENCARGADO = "encargado"
-
+ROL_VENDEDOR = "vendedor tienda"
+ROL_ENCARGADO = "encargado tienda"
+ROL_VENDEDOR = "vendedor CD"
+ROL_ENCARGADO = "encargado CD"
 # Roles que ven todas las sedes (opcional). Deja la lista vacia
 # si no existe un rol administrador.
 ROLES_TODAS_LAS_SEDES = ["administrador"]
