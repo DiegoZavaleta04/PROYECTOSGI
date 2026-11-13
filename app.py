@@ -1,7 +1,7 @@
 import os
 import mysql.connector
 import streamlit as st
-from productos import mostrar_productos
+from modulos.Producto import mostrar_productos
 
 NOMBRE_LOGO = "Logo prueba.jpeg"
 
