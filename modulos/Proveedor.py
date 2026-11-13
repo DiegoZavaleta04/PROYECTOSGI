@@ -193,7 +193,7 @@ def validar_datos(nombre, documento, telefono):
 # ==============================
 def mostrar_proveedor():
     st.header("Gestión de proveedores")
-st.write(dict(st.session_state))
+    st.write(dict(st.session_state))
     # ---- Permisos del usuario actual ----
     sede_usuario, ve_todas, puede_editar = obtener_permisos()
 
