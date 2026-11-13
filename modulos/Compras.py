@@ -136,8 +136,8 @@ def obtener_detalle(id_compra):
             p.Nombre,
             d.Cantidad,
             u.Abreviatura,
-            d.Precio_unitario,
-            d.Cantidad * d.Precio_unitario
+            d.precio_compra,
+            d.Cantidad * d.precio_compra
         FROM DETALLE_COMPRA d
         INNER JOIN PRODUCTOS p
             ON d.Id_producto = p.Id_producto
