@@ -8,17 +8,25 @@ from config.conexion import obtener_conexion
 # ==============================
 # Claves de st.session_state donde guardas los datos del usuario
 # al iniciar sesion. Cambialas si en tu login se llaman distinto.
-CLAVE_ROL = "rol"
+CLAVE_ROL = "id_rol"
 CLAVE_SEDE = "id_sede"
 
-# Nombres de rol (se comparan en minusculas, sin espacios al inicio/fin)
-ROL_VENDEDOR = "vendedor tienda"
-ROL_ENCARGADO = "encargado tienda"
-ROL_VENDEDOR = "vendedor CD"
-ROL_ENCARGADO = "encargado CD"
-# Roles que ven todas las sedes (opcional). Deja la lista vacia
-# si no existe un rol administrador.
-ROLES_TODAS_LAS_SEDES = ["administrador"]
+# IDs de rol segun la tabla de roles en phpMyAdmin.
+# !! REVISA que estos numeros coincidan con tu base de datos !!
+ID_ROL_ENCARGADO_CD = 1
+ID_ROL_VENDEDOR_CD = 2
+ID_ROL_ENCARGADO_TIENDA = 3
+ID_ROL_VENDEDOR_TIENDA = 4
+ID_ROL_ADMINISTRADOR = 5
+
+# Encargados: ven y modifican los proveedores de SU sede
+IDS_ROL_ENCARGADO = [ID_ROL_ENCARGADO_CD, ID_ROL_ENCARGADO_TIENDA]
+
+# Vendedores: solo ven los proveedores de SU sede
+IDS_ROL_VENDEDOR = [ID_ROL_VENDEDOR_CD, ID_ROL_VENDEDOR_TIENDA]
+
+# Administrador: ve y modifica todas las sedes
+IDS_ROL_TODAS_LAS_SEDES = [ID_ROL_ADMINISTRADOR]
 
 
 def obtener_permisos():
@@ -29,16 +37,16 @@ def obtener_permisos():
     - Encargado: ve y modifica solo los proveedores de su sede.
     - Administrador (si existe): ve y modifica todo.
     """
-    rol = str(st.session_state.get(CLAVE_ROL, "")).strip().lower()
+    id_rol = st.session_state.get(CLAVE_ROL)
     id_sede = st.session_state.get(CLAVE_SEDE)
 
-    if rol in ROLES_TODAS_LAS_SEDES:
+    if id_rol in IDS_ROL_TODAS_LAS_SEDES:
         return None, True, True
 
-    if rol == ROL_ENCARGADO and id_sede is not None:
+    if id_rol in IDS_ROL_ENCARGADO and id_sede is not None:
         return id_sede, False, True
 
-    if rol == ROL_VENDEDOR and id_sede is not None:
+    if id_rol in IDS_ROL_VENDEDOR and id_sede is not None:
         return id_sede, False, False
 
     # Rol desconocido o sin sede asignada: sin acceso
@@ -193,7 +201,7 @@ def validar_datos(nombre, documento, telefono):
 # ==============================
 def mostrar_proveedor():
     st.header("Gestión de proveedores")
-    st.write(dict(st.session_state))
+
     # ---- Permisos del usuario actual ----
     sede_usuario, ve_todas, puede_editar = obtener_permisos()
 
