@@ -18,10 +18,13 @@ ID_ROL_ADMINISTRADOR = 5
 T_USUARIO = "USUARIO"
 T_SEDE = "Sede"
 T_CLIENTE = "CLIENTE"
-T_PRODUCTOS = "PRODUCTOS"
+T_PRODUCTOS = "PRODUCTOSs"
 T_UNIDAD = "UNIDAD_MEDIDA"
 T_VENTAS = "VENTAS"
 T_DETALLE_VENTA = "DETALLE_VENTA"
+
+# Columna del DUI/NIT en la tabla de clientes (revisa en phpMyAdmin)
+C_CLIENTE_DOC = "DUI_NIT"
 
 
 # ==============================
@@ -80,18 +83,6 @@ def obtener_nombre_sede(id_sede):
     return filas[0][0] if filas else ""
 
 
-def obtener_clientes(id_sede):
-    return consultar(
-        f"""
-        SELECT Id_cliente, Nombre
-        FROM {T_CLIENTE}
-        WHERE Id_sede = %s
-        ORDER BY Nombre
-        """,
-        (id_sede,)
-    )
-
-
 def obtener_productos():
     return consultar(
         f"""
@@ -133,12 +124,18 @@ def obtener_ventas_recientes(id_sede):
     )
 
 
-def registrar_venta(fecha, id_usuario, id_sede, id_cliente, lineas):
+def registrar_venta(fecha, id_usuario, id_sede, datos_cliente, lineas):
     """
-    Guarda la venta y su detalle en una sola transaccion:
+    Guarda el cliente, la venta y su detalle en una sola transaccion:
     si algo falla, no se guarda nada.
+
+    datos_cliente = (nombre, documento, telefono)
+    Si ya existe un cliente con ese DUI/NIT en la sede, se reutiliza
+    (y se actualizan su nombre y telefono); si no, se crea uno nuevo.
     Devuelve el Id de la venta, o None si hubo error.
     """
+    nombre, documento, telefono = datos_cliente
+
     conexion = None
     cursor = None
 
@@ -149,6 +146,39 @@ def registrar_venta(fecha, id_usuario, id_sede, id_cliente, lineas):
             return None
 
         cursor = conexion.cursor()
+
+        # ---- Cliente: reutilizar si ya existe, o crearlo ----
+        cursor.execute(
+            f"""
+            SELECT Id_cliente
+            FROM {T_CLIENTE}
+            WHERE {C_CLIENTE_DOC} = %s AND Id_sede = %s
+            LIMIT 1
+            """,
+            (documento, id_sede)
+        )
+        fila = cursor.fetchone()
+
+        if fila:
+            id_cliente = fila[0]
+            cursor.execute(
+                f"""
+                UPDATE {T_CLIENTE}
+                SET Nombre = %s, Telefono = %s
+                WHERE Id_cliente = %s
+                """,
+                (nombre, telefono, id_cliente)
+            )
+        else:
+            cursor.execute(
+                f"""
+                INSERT INTO {T_CLIENTE}
+                (Nombre, {C_CLIENTE_DOC}, Telefono, Id_sede)
+                VALUES (%s, %s, %s, %s)
+                """,
+                (nombre, documento, telefono, id_sede)
+            )
+            id_cliente = cursor.lastrowid
 
         cursor.execute(
             f"""
@@ -244,15 +274,14 @@ def mostrar_venta():
     if "lineas_venta" not in st.session_state:
         st.session_state["lineas_venta"] = []
 
-    clientes = obtener_clientes(id_sede)
-    productos = obtener_productos()
+    # Limpiar los datos del cliente despues de registrar una venta
+    # (debe hacerse antes de crear los campos)
+    if st.session_state.pop("limpiar_cliente_venta", False):
+        st.session_state["venta_cli_nombre"] = ""
+        st.session_state["venta_cli_doc"] = ""
+        st.session_state["venta_cli_tel"] = ""
 
-    if not clientes:
-        st.warning(
-            "Esta sede no tiene clientes registrados. "
-            "Registre un cliente antes de vender."
-        )
-        return
+    productos = obtener_productos()
 
     if not productos:
         st.warning(
@@ -263,28 +292,46 @@ def mostrar_venta():
     # -----------------------------------
     # DATOS DE LA VENTA
     # -----------------------------------
-    col1, col2 = st.columns(2)
+    st.subheader("Datos del cliente")
+
+    col1, col2, col3 = st.columns(3)
 
     with col1:
-        cliente = st.selectbox(
-            "Cliente",
-            clientes,
-            format_func=lambda c: c[1]
+        cliente_nombre = st.text_input(
+            "Nombre del cliente",
+            max_chars=100,
+            key="venta_cli_nombre"
         )
 
     with col2:
+        cliente_doc = st.text_input(
+            "DUI/NIT",
+            max_chars=20,
+            key="venta_cli_doc"
+        )
+
+    with col3:
+        cliente_tel = st.text_input(
+            "Teléfono (opcional)",
+            max_chars=20,
+            key="venta_cli_tel"
+        )
+
+    st.subheader("Datos de la venta")
+
+    col4, col5, col6 = st.columns(3)
+
+    with col4:
+        fecha = st.date_input("Fecha de la venta")
+
+    with col5:
         st.text_input(
             "Sede",
             value=nombre_sede,
             disabled=True
         )
 
-    col3, col4 = st.columns(2)
-
-    with col3:
-        fecha = st.date_input("Fecha de la venta")
-
-    with col4:
+    with col6:
         st.text_input(
             "Vendedor",
             value=nombre_vendedor,
@@ -409,7 +456,22 @@ def mostrar_venta():
     # REGISTRAR
     # -----------------------------------
     if st.button("Registrar venta"):
-        if not lineas:
+        nombre_cli = cliente_nombre.strip()
+        doc_cli = cliente_doc.strip()
+        tel_cli = cliente_tel.strip()
+
+        if nombre_cli == "" or doc_cli == "":
+            st.warning(
+                "Debe ingresar el nombre y el DUI/NIT del cliente."
+            )
+        elif tel_cli != "" and not all(
+            c.isdigit() or c in " +-()" for c in tel_cli
+        ):
+            st.warning(
+                "El teléfono solo puede tener números, "
+                "espacios, + - ( )."
+            )
+        elif not lineas:
             st.warning(
                 "Agregue al menos un producto al detalle."
             )
@@ -418,7 +480,7 @@ def mostrar_venta():
                 fecha,
                 id_usuario,
                 id_sede,       # siempre la sede del usuario
-                cliente[0],
+                (nombre_cli, doc_cli, tel_cli or None),
                 lineas
             )
 
@@ -428,6 +490,7 @@ def mostrar_venta():
                     2
                 )
                 st.session_state["lineas_venta"] = []
+                st.session_state["limpiar_cliente_venta"] = True
                 st.session_state["mensaje_venta"] = (
                     f"Venta #{id_venta} registrada correctamente. "
                     f"Total: ${total:,.2f}"
@@ -465,3 +528,4 @@ def mostrar_venta():
         )
     else:
         st.info("Aún no hay ventas registradas en esta sede.")
+
