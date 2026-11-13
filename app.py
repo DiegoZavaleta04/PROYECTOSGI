@@ -157,7 +157,7 @@ MODULOS = {
     "Empleados": cargar_modulo("empleados", "mostrar_empleado"),
     "Productos": cargar_modulo("Producto", "render"),
     "Proveedores": cargar_modulo("Proveedor", "mostrar_proveedor"),
-    "Empleados": cargar_modulo("empleados", "mostrar_empleado"),
+    "Empleados": cargar_modulo("Empleado", "mostrar_empleado"),
     # "Inventario": cargar_modulo("inventario", "mostrar_inventario"),
     # "Compras": cargar_modulo("compras", "mostrar_compra"),
     # "Clientes": cargar_modulo("clientes", "mostrar_cliente"),
