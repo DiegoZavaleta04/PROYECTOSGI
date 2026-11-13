@@ -13,6 +13,16 @@ CLAVE_ROL = "id_rol"
 # REVISA que coincida con el id del rol Administrador en phpMyAdmin
 ID_ROL_ADMINISTRADOR = 5
 
+# Nombres de las tablas EXACTAMENTE como aparecen en phpMyAdmin
+# (importan las mayusculas y minusculas)
+T_USUARIO = "USUARIO"
+T_SEDE = "Sede"
+T_CLIENTE = "CLIENTE"
+T_PRODUCTOS = "PRODUCTOS"
+T_UNIDAD = "UNIDAD_MEDIDA"
+T_VENTAS = "VENTAS"
+T_DETALLE_VENTA = "DETALLE_VENTA"
+
 
 # ==============================
 # FUNCIONES DE BASE DE DATOS
@@ -51,9 +61,9 @@ def consultar(consulta, parametros=()):
 
 def obtener_usuario(correo):
     filas = consultar(
-        """
+        f"""
         SELECT Id_usuario, Nombre, Apellido
-        FROM Usuario
+        FROM {T_USUARIO}
         WHERE Correo = %s
         LIMIT 1
         """,
@@ -64,7 +74,7 @@ def obtener_usuario(correo):
 
 def obtener_nombre_sede(id_sede):
     filas = consultar(
-        "SELECT nombre FROM Sede WHERE id_sede = %s",
+        f"SELECT nombre FROM {T_SEDE} WHERE id_sede = %s",
         (id_sede,)
     )
     return filas[0][0] if filas else ""
@@ -72,9 +82,9 @@ def obtener_nombre_sede(id_sede):
 
 def obtener_clientes(id_sede):
     return consultar(
-        """
+        f"""
         SELECT Id_cliente, Nombre
-        FROM Cliente
+        FROM {T_CLIENTE}
         WHERE Id_sede = %s
         ORDER BY Nombre
         """,
@@ -84,14 +94,14 @@ def obtener_clientes(id_sede):
 
 def obtener_productos():
     return consultar(
-        """
+        f"""
         SELECT
             p.Id_producto,
             p.Nombre,
             u.Abreviatura,
             p.Id_unidad
-        FROM Productos p
-        INNER JOIN Unidad_medida u
+        FROM {T_PRODUCTOS} p
+        INNER JOIN {T_UNIDAD} u
             ON p.Id_unidad = u.Id_unidad
         ORDER BY p.Nombre
         """
@@ -100,19 +110,19 @@ def obtener_productos():
 
 def obtener_ventas_recientes(id_sede):
     return consultar(
-        """
+        f"""
         SELECT
             v.Id_venta,
             v.Fecha,
             c.Nombre,
             CONCAT(u.Nombre, ' ', u.Apellido),
             COALESCE(SUM(d.Cantidad * d.Precio_venta), 0)
-        FROM Ventas v
-        INNER JOIN Cliente c
+        FROM {T_VENTAS} v
+        INNER JOIN {T_CLIENTE} c
             ON v.Id_cliente = c.Id_cliente
-        INNER JOIN Usuario u
+        INNER JOIN {T_USUARIO} u
             ON v.Id_usuario = u.Id_usuario
-        LEFT JOIN Detalle_venta d
+        LEFT JOIN {T_DETALLE_VENTA} d
             ON d.Id_venta = v.Id_venta
         WHERE v.Id_sede = %s
         GROUP BY v.Id_venta, v.Fecha, c.Nombre, u.Nombre, u.Apellido
@@ -141,8 +151,8 @@ def registrar_venta(fecha, id_usuario, id_sede, id_cliente, lineas):
         cursor = conexion.cursor()
 
         cursor.execute(
-            """
-            INSERT INTO Ventas (Fecha, Id_usuario, Id_sede, Id_cliente)
+            f"""
+            INSERT INTO {T_VENTAS} (Fecha, Id_usuario, Id_sede, Id_cliente)
             VALUES (%s, %s, %s, %s)
             """,
             (fecha, id_usuario, id_sede, id_cliente)
@@ -151,8 +161,8 @@ def registrar_venta(fecha, id_usuario, id_sede, id_cliente, lineas):
         id_venta = cursor.lastrowid
 
         cursor.executemany(
-            """
-            INSERT INTO Detalle_venta
+            f"""
+            INSERT INTO {T_DETALLE_VENTA}
             (Id_venta, Id_producto, Cantidad, Id_unidad, Precio_venta)
             VALUES (%s, %s, %s, %s, %s)
             """,
