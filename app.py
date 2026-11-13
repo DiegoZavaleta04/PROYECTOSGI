@@ -1,6 +1,7 @@
 import os
 import mysql.connector
 import streamlit as st
+from productos import mostrar_productos
 
 NOMBRE_LOGO = "Logo prueba.jpeg"
 
@@ -106,6 +107,23 @@ if not st.session_state.get("sesion_iniciada"):
 else:
     st.title("Bienvenido")
     st.write(f"Sesión iniciada con: {st.session_state['usuario']}")
-    if st.button("Cerrar sesión"):
+
+    # Menú principal
+    st.sidebar.title("Menú principal")
+
+    opcion = st.sidebar.radio(
+        "Seleccione un módulo:",
+        ["Inicio", "Productos"]
+    )
+
+    if opcion == "Inicio":
+        st.subheader("Inicio")
+        st.write("Bienvenido al Sistema de Gestión de Información.")
+
+    elif opcion == "Productos":
+        mostrar_productos()
+
+    # Cerrar sesión
+    if st.sidebar.button("Cerrar sesión"):
         st.session_state.clear()
         st.rerun()
