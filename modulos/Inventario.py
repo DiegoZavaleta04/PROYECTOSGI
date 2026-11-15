@@ -6,7 +6,7 @@ from config.conexion import obtener_conexion
 
 
 # ==========================================================
-# 1. CONSTANTES Y PERMISOS
+# 1. ROLES Y PERMISOS
 # ==========================================================
 
 ROL_ENCARGADO_CD = 1
@@ -22,7 +22,7 @@ TIPOS_MOVIMIENTO = ["Entrada", "Salida", "Ajuste"]
 
 
 # ==========================================================
-# 2. CONEXIÓN Y CONSULTAS
+# 2. FUNCIONES DE CONEXIÓN
 # ==========================================================
 
 def consultar(sql, parametros=None):
@@ -33,7 +33,6 @@ def consultar(sql, parametros=None):
         cursor = conexion.cursor()
         cursor.execute(sql, parametros or ())
         resultados = cursor.fetchall()
-
         cursor.close()
 
         return resultados
@@ -53,7 +52,6 @@ def ejecutar(sql, parametros=None):
     try:
         cursor = conexion.cursor()
         cursor.execute(sql, parametros or ())
-
         conexion.commit()
         cursor.close()
 
@@ -86,7 +84,7 @@ def obtener_productos():
 
 
 # ==========================================================
-# 4. CONSULTAR INVENTARIO DE UNA SEDE
+# 4. CONSULTAR INVENTARIO POR SEDE
 # ==========================================================
 
 def obtener_inventario(busqueda="", id_sede=None):
@@ -106,15 +104,10 @@ def obtener_inventario(busqueda="", id_sede=None):
     parametros = [id_sede]
 
     if busqueda:
-        sql += """
-            AND P.Nombre LIKE %s
-        """
-
+        sql += " AND P.Nombre LIKE %s"
         parametros.append(f"%{busqueda}%")
 
-    sql += """
-        ORDER BY P.Nombre
-    """
+    sql += " ORDER BY P.Nombre"
 
     resultados = consultar(sql, parametros)
 
@@ -129,12 +122,11 @@ def obtener_inventario(busqueda="", id_sede=None):
 
 
 # ==========================================================
-# 5. REGISTRAR MOVIMIENTOS DE INVENTARIO
+# 5. REGISTRAR MOVIMIENTOS
 # ==========================================================
 
 def aplicar_movimiento(tipo, id_producto, id_sede, cantidad):
 
-    # Validar cantidades
     if tipo == "Ajuste":
 
         if cantidad < 0:
@@ -148,12 +140,13 @@ def aplicar_movimiento(tipo, id_producto, id_sede, cantidad):
             return False
 
     conexion = obtener_conexion()
+    cursor = None
 
     try:
 
         cursor = conexion.cursor()
 
-        # Buscar el inventario del producto en esa sede
+        # Buscar el producto en el inventario de la sede
         sql_buscar = """
             SELECT Id_inventario, Existencia
             FROM INVENTARIO
@@ -169,9 +162,9 @@ def aplicar_movimiento(tipo, id_producto, id_sede, cantidad):
 
         resultado = cursor.fetchone()
 
-        # ----------------------------------------------
+        # ------------------------------------------
         # ENTRADA
-        # ----------------------------------------------
+        # ------------------------------------------
 
         if tipo == "Entrada":
 
@@ -202,15 +195,15 @@ def aplicar_movimiento(tipo, id_producto, id_sede, cantidad):
                     (id_producto, id_sede, cantidad)
                 )
 
-        # ----------------------------------------------
+        # ------------------------------------------
         # SALIDA
-        # ----------------------------------------------
+        # ------------------------------------------
 
         elif tipo == "Salida":
 
             if not resultado:
                 st.error(
-                    "Este producto no tiene existencias registradas en esta sede."
+                    "El producto no tiene existencias en esta sede."
                 )
                 conexion.rollback()
                 return False
@@ -237,9 +230,9 @@ def aplicar_movimiento(tipo, id_producto, id_sede, cantidad):
                 (cantidad, id_producto, id_sede)
             )
 
-        # ----------------------------------------------
+        # ------------------------------------------
         # AJUSTE
-        # ----------------------------------------------
+        # ------------------------------------------
 
         elif tipo == "Ajuste":
 
@@ -271,19 +264,19 @@ def aplicar_movimiento(tipo, id_producto, id_sede, cantidad):
                 )
 
         conexion.commit()
-
         return True
 
     except Exception as e:
 
         conexion.rollback()
         st.error(f"Error al registrar el movimiento: {e}")
-
         return False
 
     finally:
 
-        cursor.close()
+        if cursor:
+            cursor.close()
+
         conexion.close()
 
 
@@ -293,46 +286,39 @@ def aplicar_movimiento(tipo, id_producto, id_sede, cantidad):
 
 def mostrar_inventario():
 
-    # Obtener rol y sede del usuario que inició sesión
     id_rol = st.session_state.get("id_rol")
     id_sede_usuario = st.session_state.get("id_sede")
 
-    # ----------------------------------------------
-    # VALIDAR PERMISOS
-    # ----------------------------------------------
+    # ------------------------------------------
+    # VALIDAR ROL Y SEDE
+    # ------------------------------------------
 
     try:
         id_rol = int(id_rol)
         id_sede_usuario = int(id_sede_usuario)
 
     except (TypeError, ValueError):
-
-        st.error(
-            "No se pudo identificar el rol o la sede del usuario."
-        )
+        st.error("No se pudo identificar el rol o la sede del usuario.")
         return
 
     if id_rol not in ROLES_PUEDEN_VER:
-
-        st.error(
-            "No tienes permisos para acceder al módulo de inventario."
-        )
+        st.error("No tienes permisos para acceder al inventario.")
         return
 
-    # ----------------------------------------------
+    # ------------------------------------------
     # ENCABEZADO
-    # ----------------------------------------------
+    # ------------------------------------------
 
     st.title("Control de inventario")
 
     st.write(
-        "Consulta las existencias de productos correspondientes "
-        "a tu sede."
+        "Consulta las existencias de los productos "
+        "correspondientes a tu sede."
     )
 
-    # ----------------------------------------------
-    # CONSULTAR INVENTARIO
-    # ----------------------------------------------
+    # ------------------------------------------
+    # CONSULTAR EXISTENCIAS
+    # ------------------------------------------
 
     st.subheader("Existencias disponibles")
 
@@ -360,9 +346,9 @@ def mostrar_inventario():
             hide_index=True
         )
 
-    # ----------------------------------------------
-    # PERMISOS PARA REGISTRAR MOVIMIENTOS
-    # ----------------------------------------------
+    # ------------------------------------------
+    # PERMISOS PARA MOVIMIENTOS
+    # ------------------------------------------
 
     if id_rol not in ROLES_PUEDEN_MOVER:
 
@@ -373,9 +359,9 @@ def mostrar_inventario():
 
         return
 
-    # ----------------------------------------------
+    # ------------------------------------------
     # FORMULARIO DE MOVIMIENTOS
-    # ----------------------------------------------
+    # ------------------------------------------
 
     st.divider()
 
@@ -384,11 +370,7 @@ def mostrar_inventario():
     productos = obtener_productos()
 
     if not productos:
-
-        st.warning(
-            "No hay productos registrados en el catálogo."
-        )
-
+        st.warning("No hay productos registrados en el catálogo.")
         return
 
     opciones_productos = {
@@ -444,8 +426,5 @@ def mostrar_inventario():
 
             if resultado:
 
-                st.success(
-                    "Movimiento registrado correctamente."
-                )
-
+                st.success("Movimiento registrado correctamente.")
                 st.rerun()
