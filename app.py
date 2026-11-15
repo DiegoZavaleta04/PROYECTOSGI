@@ -145,9 +145,9 @@ def mostrar_informacion():
 # escrito igual que en GitHub (mayúsculas incluidas).
 # "funcion" es la función que dibuja la pantalla en ese archivo.
 #
-# Ejemplo: si creas modulos/Compras.py con la función
-# mostrar_compra(), agrega esta línea:
-#   "Compras": cargar_modulo("Compras", "mostrar_compra"),
+# Ejemplo: si creas modulos/Clientes.py con la función
+# mostrar_cliente(), agrega esta línea:
+#   "Clientes": cargar_modulo("Clientes", "mostrar_cliente"),
 # ==============================================================
 MODULOS = {
     "Ventas": cargar_modulo("ventas", "mostrar_venta"),
@@ -159,6 +159,32 @@ MODULOS = {
     # "Clientes": cargar_modulo("Clientes", "mostrar_cliente"),
     "Información": mostrar_informacion,
 }
+
+
+# ==============================================================
+# PERMISOS POR MÓDULO
+#
+# Aquí se indica qué roles pueden ver cada módulo en el menú.
+# Roles: 1 Encargado CD, 2 Encargado tienda, 3 Vendedor CD,
+#        4 Vendedor tienda, 5 Administrador
+#
+# Los módulos que NO estén en este diccionario los ven todos.
+# Para restringir otro módulo, agrega una línea:
+#   "Compras": (1, 2, 5),
+# ==============================================================
+PERMISOS_MODULOS = {
+    "Empleados": (1, 2, 5),
+}
+
+
+def modulos_permitidos(id_rol):
+    """Devuelve los nombres de los módulos que el rol puede ver."""
+    return [
+        nombre
+        for nombre in MODULOS
+        if nombre not in PERMISOS_MODULOS
+        or id_rol in PERMISOS_MODULOS[nombre]
+    ]
 
 
 # ==============================
@@ -191,10 +217,12 @@ if st.session_state["sesion_iniciada"]:
         f"Usuario: {st.session_state['usuario']}"
     )
 
-    # Las opciones salen automáticamente del diccionario MODULOS
+    # El menú solo incluye los módulos que el rol puede ver
+    opciones = modulos_permitidos(st.session_state["id_rol"])
+
     seleccion = st.sidebar.selectbox(
         "Seleccione una opción",
-        list(MODULOS.keys())
+        opciones
     )
 
     # Mostrar el módulo elegido
