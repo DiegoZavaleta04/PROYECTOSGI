@@ -7,9 +7,8 @@ from config.conexion import obtener_conexion
 ESTADO_ACTIVO = "Activo"
 ESTADO_INACTIVO = "Inactivo"
 
-# Permisos del módulo (según la tabla Rol):
-# 1 = Encargado CD, 2 = Encargado tienda, 5 = Administrador
-ROLES_VER_LISTADO = (1, 2, 5)
+# Solo el administrador (rol 5) puede registrar y editar empleados.
+# Quién ve el módulo en el menú se define en app.py (PERMISOS_MODULOS).
 ROLES_ADMINISTRAR = (5,)
 
 
@@ -206,13 +205,6 @@ def mostrar_empleado():
 
     # Rol del usuario con la sesión iniciada
     id_rol_usuario = st.session_state.get("id_rol")
-
-    # Solo encargados y administrador pueden entrar a este módulo
-    if id_rol_usuario not in ROLES_VER_LISTADO:
-        st.warning(
-            "No tiene permiso para ver este módulo."
-        )
-        return
 
     # Mensaje que se guarda antes de recargar la página
     mensaje = st.session_state.pop("mensaje_empleado", None)
