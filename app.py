@@ -176,6 +176,7 @@ PERMISOS_MODULOS = {
     "Ventas": (1, 2, 3, 4),
     "Empleados": (1, 2, 5),
     "Inventario": (1, 2, 3, 4),
+    "Productos": (1, 2, 3, 4, 5),
 }
 
 
