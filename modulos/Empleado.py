@@ -7,6 +7,11 @@ from config.conexion import obtener_conexion
 ESTADO_ACTIVO = "Activo"
 ESTADO_INACTIVO = "Inactivo"
 
+# Permisos del módulo (según la tabla Rol):
+# 1 = Encargado CD, 2 = Encargado tienda, 5 = Administrador
+ROLES_VER_LISTADO = (1, 2, 5)
+ROLES_ADMINISTRAR = (5,)
+
 
 # ==============================
 # FUNCIONES DE BASE DE DATOS
@@ -199,6 +204,16 @@ def validar_datos(nombre, apellido, correo, contrasena, exigir_contrasena):
 def mostrar_empleado():
     st.header("Gestión de empleados")
 
+    # Rol del usuario con la sesión iniciada
+    id_rol_usuario = st.session_state.get("id_rol")
+
+    # Solo encargados y administrador pueden entrar a este módulo
+    if id_rol_usuario not in ROLES_VER_LISTADO:
+        st.warning(
+            "No tiene permiso para ver este módulo."
+        )
+        return
+
     # Mensaje que se guarda antes de recargar la página
     mensaje = st.session_state.pop("mensaje_empleado", None)
     if mensaje:
@@ -298,6 +313,15 @@ def mostrar_empleado():
         st.info(
             "No se encontraron empleados."
         )
+
+    # Solo el administrador puede registrar y editar empleados
+    if id_rol_usuario not in ROLES_ADMINISTRAR:
+        st.divider()
+        st.info(
+            "Solo el administrador puede registrar "
+            "y editar empleados."
+        )
+        return
 
     st.divider()
 
