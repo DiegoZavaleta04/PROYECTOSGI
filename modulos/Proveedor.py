@@ -1,55 +1,86 @@
+import re
+
 import pandas as pd
 import streamlit as st
 from config.conexion import obtener_conexion
 
 
 # ==============================
-# PERMISOS (AJUSTAR A TU PROYECTO)
+# PERMISOS
 # ==============================
 # Claves de st.session_state donde guardas los datos del usuario
 # al iniciar sesion. Cambialas si en tu login se llaman distinto.
 CLAVE_ROL = "id_rol"
 CLAVE_SEDE = "id_sede"
 
-# IDs de rol segun la tabla de roles en phpMyAdmin.
-# !! REVISA que estos numeros coincidan con tu base de datos !!
-ID_ROL_ENCARGADO_CD = 1
-ID_ROL_VENDEDOR_CD = 2
-ID_ROL_ENCARGADO_TIENDA = 3
-ID_ROL_VENDEDOR_TIENDA = 4
-ID_ROL_ADMINISTRADOR = 5
+# Nombres de los roles tal como estan en la tabla Rol (se comparan sin
+# importar mayusculas o minusculas). Se usan NOMBRES y no numeros de id
+# para que el modulo no dependa del orden en que se crearon los roles.
+# !! REVISA que coincidan con tu tabla Rol (SELECT * FROM Rol;) !!
+ROL_ENCARGADO_CD = "encargado cd"
+ROL_VENDEDOR_CD = "vendedor cd"
+ROL_ENCARGADO_TIENDA = "encargado tienda"
+ROL_VENDEDOR_TIENDA = "vendedor tienda"
 
-# Encargados: ven y modifican los proveedores de SU sede
-IDS_ROL_ENCARGADO = [ID_ROL_ENCARGADO_CD, ID_ROL_ENCARGADO_TIENDA]
+# El rol Administrador NO aparece: no tiene acceso a los proveedores.
 
-# Vendedores: solo ven los proveedores de SU sede
-IDS_ROL_VENDEDOR = [ID_ROL_VENDEDOR_CD, ID_ROL_VENDEDOR_TIENDA]
+# True si el encargado del CD tambien debe poder agregar y modificar
+# proveedores del CD. Con False solo puede verlos.
+ENCARGADO_CD_PUEDE_EDITAR = False
 
-# Administrador: ve y modifica todas las sedes
-IDS_ROL_TODAS_LAS_SEDES = [ID_ROL_ADMINISTRADOR]
+
+def obtener_nombre_rol():
+    """Devuelve el nombre del rol del usuario (en minusculas), o None."""
+    id_rol = st.session_state.get(CLAVE_ROL)
+
+    if id_rol is None:
+        return None
+
+    # Se guarda en la sesion para no consultar la base en cada recarga
+    clave = f"_nombre_rol_{id_rol}"
+
+    if clave not in st.session_state:
+        filas = consultar(
+            "SELECT Nombre FROM Rol WHERE Id_rol = %s",
+            (id_rol,)
+        )
+        st.session_state[clave] = (
+            filas[0][0].strip().lower() if filas else None
+        )
+
+    return st.session_state[clave]
 
 
 def obtener_permisos():
     """
     Devuelve (id_sede, puede_ver_todas, puede_editar).
 
-    - Vendedor: solo ve los proveedores de su sede (CD o tienda).
-    - Encargado: ve y modifica solo los proveedores de su sede.
-    - Administrador (si existe): ve y modifica todo.
+    - Administrador: sin acceso a los proveedores.
+    - Encargado del CD: ve los proveedores del CD (su sede). Solo los
+      modifica si ENCARGADO_CD_PUEDE_EDITAR es True.
+    - Vendedor del CD: solo ve los proveedores del CD (su sede).
+    - Encargado de tienda: ve, agrega y modifica los proveedores de SU
+      tienda.
+    - Vendedor de tienda: solo ve los proveedores de SU tienda.
+
+    Ningun rol ve todas las sedes, por eso puede_ver_todas siempre es False.
     """
-    id_rol = st.session_state.get(CLAVE_ROL)
     id_sede = st.session_state.get(CLAVE_SEDE)
+    rol = obtener_nombre_rol()
 
-    if id_rol in IDS_ROL_TODAS_LAS_SEDES:
-        return None, True, True
+    if rol is None or id_sede is None:
+        return None, False, False
 
-    if id_rol in IDS_ROL_ENCARGADO and id_sede is not None:
+    if rol == ROL_ENCARGADO_TIENDA:
         return id_sede, False, True
 
-    if id_rol in IDS_ROL_VENDEDOR and id_sede is not None:
+    if rol == ROL_ENCARGADO_CD:
+        return id_sede, False, ENCARGADO_CD_PUEDE_EDITAR
+
+    if rol in (ROL_VENDEDOR_CD, ROL_VENDEDOR_TIENDA):
         return id_sede, False, False
 
-    # Rol desconocido o sin sede asignada: sin acceso
+    # Administrador, rol desconocido o sin sede asignada: sin acceso
     return None, False, False
 
 
@@ -175,23 +206,43 @@ def obtener_proveedores(busqueda="", id_sede=None):
     )
 
 
+# Formatos que tambien exige la base de datos (CHECK):
+#   DUI: 00000000-0        NIT: 0000-000000-000-0
+#   Telefono: 7777-7777
+PATRON_DUI = re.compile(r"^\d{8}-\d$")
+PATRON_NIT = re.compile(r"^\d{4}-\d{6}-\d{3}-\d$")
+PATRON_TELEFONO = re.compile(r"^\d{4}-\d{4}$")
+
+
 def validar_datos(nombre, documento, telefono):
     """Devuelve un mensaje de error, o None si todo está bien."""
-    if nombre.strip() == "" or documento.strip() == "":
-        return "Debe ingresar el nombre y el DUI/NIT."
+    nombre = nombre.strip()
+    documento = documento.strip()
+    telefono = telefono.strip()
 
-    if len(nombre.strip()) > 100:
+    if nombre == "":
+        return "Debe ingresar el nombre del proveedor."
+
+    if len(nombre) > 100:
         return "El nombre admite máximo 100 caracteres."
 
-    if len(documento.strip()) > 20:
-        return "El DUI/NIT admite máximo 20 caracteres."
+    # El DUI/NIT es opcional, pero si se escribe debe tener formato valido
+    if documento != "":
+        if not (
+            PATRON_DUI.match(documento)
+            or PATRON_NIT.match(documento)
+        ):
+            return (
+                "El DUI/NIT no tiene un formato válido. "
+                "Use 00000000-0 (DUI) o 0000-000000-000-0 (NIT)."
+            )
 
-    if telefono.strip() != "":
-        if len(telefono.strip()) > 20:
-            return "El teléfono admite máximo 20 caracteres."
+    # El telefono es obligatorio
+    if telefono == "":
+        return "Debe ingresar el teléfono."
 
-        if not all(c.isdigit() or c in " +-()" for c in telefono.strip()):
-            return "El teléfono solo puede tener números, espacios, + - ( )."
+    if not PATRON_TELEFONO.match(telefono):
+        return "El teléfono debe tener el formato 7777-7777."
 
     return None
 
@@ -266,7 +317,7 @@ def mostrar_proveedor():
 
     if proveedores:
         tabla = pd.DataFrame(
-            [(p[0], p[1], p[2], p[3], p[5]) for p in proveedores],
+            [(p[0], p[1], p[2] or "", p[3], p[5]) for p in proveedores],
             columns=[
                 "ID",
                 "Proveedor",
@@ -290,7 +341,7 @@ def mostrar_proveedor():
             "No se encontraron proveedores."
         )
 
-    # El vendedor solo puede consultar, aqui termina su pantalla
+    # Los roles de solo consulta terminan aqui su pantalla
     if not puede_editar:
         return
 
@@ -308,13 +359,15 @@ def mostrar_proveedor():
         )
 
         documento = st.text_input(
-            "DUI/NIT",
-            max_chars=20
+            "DUI/NIT (opcional)",
+            max_chars=17,
+            placeholder="00000000-0 o 0000-000000-000-0"
         )
 
         telefono = st.text_input(
             "Teléfono",
-            max_chars=20
+            max_chars=9,
+            placeholder="7777-7777"
         )
 
         sede = st.selectbox(
@@ -337,7 +390,7 @@ def mostrar_proveedor():
         if error_validacion:
             st.warning(error_validacion)
         else:
-            # Seguridad: el encargado siempre guarda en su propia sede
+            # Seguridad: siempre se guarda en la sede del usuario
             id_sede_guardar = sede[0] if ve_todas else sede_usuario
 
             consulta = """
@@ -350,8 +403,8 @@ def mostrar_proveedor():
                 consulta,
                 (
                     nombre.strip(),
-                    documento.strip(),
-                    telefono.strip() or None,
+                    documento.strip() or None,
+                    telefono.strip(),
                     id_sede_guardar
                 )
             )
@@ -403,15 +456,17 @@ def mostrar_proveedor():
         )
 
         nuevo_documento = st.text_input(
-            "DUI/NIT",
+            "DUI/NIT (opcional)",
             value=proveedor[2] or "",
-            max_chars=20
+            max_chars=17,
+            placeholder="00000000-0 o 0000-000000-000-0"
         )
 
         nuevo_telefono = st.text_input(
             "Teléfono",
             value=proveedor[3] or "",
-            max_chars=20
+            max_chars=9,
+            placeholder="7777-7777"
         )
 
         nueva_sede = st.selectbox(
@@ -436,7 +491,7 @@ def mostrar_proveedor():
         if error_validacion:
             st.warning(error_validacion)
         else:
-            # Seguridad: el encargado no puede mover proveedores a otra sede
+            # Seguridad: nadie mueve proveedores a otra sede
             id_sede_guardar = nueva_sede[0] if ve_todas else sede_usuario
 
             # Seguridad extra: el WHERE tambien limita por sede
@@ -456,8 +511,8 @@ def mostrar_proveedor():
                 consulta,
                 (
                     nuevo_nombre.strip(),
-                    nuevo_documento.strip(),
-                    nuevo_telefono.strip() or None,
+                    nuevo_documento.strip() or None,
+                    nuevo_telefono.strip(),
                     id_sede_guardar,
                     proveedor[0],
                     sede_restriccion,
