@@ -5,7 +5,24 @@ import pandas as pd
 from modulos import productos_service as servicio
 
 
+# -----------------------------------
+# PERMISOS DEL MÓDULO PRODUCTOS
+# -----------------------------------
+
+ROLES_PUEDEN_VER = (1, 2, 3, 4)
+ROLES_PUEDEN_GESTIONAR = (2,)
+
+
 def render():
+
+    id_rol = st.session_state.get("id_rol")
+
+    # Validar acceso al módulo
+    if id_rol not in ROLES_PUEDEN_VER:
+        st.error("No tienes permisos para acceder al módulo de productos.")
+        st.stop()
+
+    puede_gestionar = id_rol in ROLES_PUEDEN_GESTIONAR
 
     st.title("Gestión de productos")
     st.write("Consulta, registra y actualiza los productos de la cooperativa.")
@@ -92,168 +109,177 @@ def render():
         st.divider()
 
         # REGISTRAR PRODUCTO
-        st.subheader("Registrar nuevo producto")
+        if puede_gestionar:
 
-        try:
-            categorias = servicio.listar_categorias()
-            unidades = servicio.listar_unidades()
+            st.subheader("Registrar nuevo producto")
 
-            if not categorias:
-                st.warning("Primero debes registrar una categoría.")
-
-            elif not unidades:
-                st.warning("Primero debes registrar una unidad de medida.")
-
-            else:
-                with st.form("form_nuevo_producto"):
-
-                    nombre = st.text_input("Nombre del producto")
-
-                    descripcion = st.text_area(
-                        "Descripción",
-                        max_chars=255
-                    )
-
-                    opciones_cat = {
-                        c["nombre"]: c["id_categoria"]
-                        for c in categorias
-                    }
-
-                    opciones_uni = {
-                        f'{u["Nombre"]} ({u["Abreviatura"]})': u["Id_unidad"]
-                        for u in unidades
-                    }
-
-                    categoria = st.selectbox(
-                        "Categoría",
-                        list(opciones_cat.keys())
-                    )
-
-                    unidad = st.selectbox(
-                        "Unidad de medida",
-                        list(opciones_uni.keys())
-                    )
-
-                    guardar = st.form_submit_button(
-                        "Registrar producto",
-                        use_container_width=True
-                    )
-
-                    if guardar:
-                        servicio.crear_producto(
-                            nombre,
-                            descripcion,
-                            opciones_uni[unidad],
-                            opciones_cat[categoria]
-                        )
-
-                        st.success("Producto registrado correctamente.")
-                        st.rerun()
-
-        except Exception as error:
-            st.error(f"No se pudo registrar el producto: {error}")
-
-        st.divider()
-
-        # EDITAR PRODUCTO
-        st.subheader("Editar producto")
-
-        try:
-            productos_editar = servicio.listar_productos()
-
-            if productos_editar:
-
-                opciones_productos = {
-                    f'{p["Id_producto"]} - {p["Nombre"]}': p
-                    for p in productos_editar
-                }
-
-                seleccionado = st.selectbox(
-                    "Selecciona el producto que deseas editar",
-                    list(opciones_productos.keys()),
-                    key="producto_editar"
-                )
-
-                producto = opciones_productos[seleccionado]
-
+            try:
                 categorias = servicio.listar_categorias()
                 unidades = servicio.listar_unidades()
 
-                with st.form("form_editar_producto"):
+                if not categorias:
+                    st.warning("Primero debes registrar una categoría.")
 
-                    nuevo_nombre = st.text_input(
-                        "Nombre",
-                        value=producto["Nombre"]
-                    )
+                elif not unidades:
+                    st.warning("Primero debes registrar una unidad de medida.")
 
-                    nueva_descripcion = st.text_area(
-                        "Descripción",
-                        value=producto["Descripcion"] or ""
-                    )
+                else:
+                    with st.form("form_nuevo_producto"):
 
-                    opciones_cat = {
-                        c["nombre"]: c["id_categoria"]
-                        for c in categorias
-                    }
+                        nombre = st.text_input("Nombre del producto")
 
-                    opciones_uni = {
-                        f'{u["Nombre"]} ({u["Abreviatura"]})': u["Id_unidad"]
-                        for u in unidades
-                    }
-
-                    categoria_actual = next(
-                        (
-                            nombre
-                            for nombre, id_cat in opciones_cat.items()
-                            if id_cat == producto["Id_categoria"]
-                        ),
-                        list(opciones_cat.keys())[0]
-                    )
-
-                    unidad_actual = next(
-                        (
-                            nombre
-                            for nombre, id_uni in opciones_uni.items()
-                            if id_uni == producto["Id_unidad"]
-                        ),
-                        list(opciones_uni.keys())[0]
-                    )
-
-                    nueva_categoria = st.selectbox(
-                        "Categoría",
-                        list(opciones_cat.keys()),
-                        index=list(opciones_cat.keys()).index(categoria_actual)
-                    )
-
-                    nueva_unidad = st.selectbox(
-                        "Unidad de medida",
-                        list(opciones_uni.keys()),
-                        index=list(opciones_uni.keys()).index(unidad_actual)
-                    )
-
-                    actualizar = st.form_submit_button(
-                        "Guardar cambios",
-                        use_container_width=True
-                    )
-
-                    if actualizar:
-
-                        servicio.actualizar_producto(
-                            producto["Id_producto"],
-                            nuevo_nombre,
-                            nueva_descripcion,
-                            opciones_uni[nueva_unidad],
-                            opciones_cat[nueva_categoria]
+                        descripcion = st.text_area(
+                            "Descripción",
+                            max_chars=255
                         )
 
-                        st.success("Producto actualizado correctamente.")
-                        st.rerun()
+                        opciones_cat = {
+                            c["nombre"]: c["id_categoria"]
+                            for c in categorias
+                        }
 
-            else:
-                st.info("No hay productos registrados para editar.")
+                        opciones_uni = {
+                            f'{u["Nombre"]} ({u["Abreviatura"]})': u["Id_unidad"]
+                            for u in unidades
+                        }
 
-        except Exception as error:
-            st.error(f"No se pudo editar el producto: {error}")
+                        categoria = st.selectbox(
+                            "Categoría",
+                            list(opciones_cat.keys())
+                        )
+
+                        unidad = st.selectbox(
+                            "Unidad de medida",
+                            list(opciones_uni.keys())
+                        )
+
+                        guardar = st.form_submit_button(
+                            "Registrar producto",
+                            use_container_width=True
+                        )
+
+                        if guardar:
+                            servicio.crear_producto(
+                                nombre,
+                                descripcion,
+                                opciones_uni[unidad],
+                                opciones_cat[categoria]
+                            )
+
+                            st.success("Producto registrado correctamente.")
+                            st.rerun()
+
+            except Exception as error:
+                st.error(f"No se pudo registrar el producto: {error}")
+
+            st.divider()
+
+            # EDITAR PRODUCTO
+            st.subheader("Editar producto")
+
+            try:
+                productos_editar = servicio.listar_productos()
+
+                if productos_editar:
+
+                    opciones_productos = {
+                        f'{p["Id_producto"]} - {p["Nombre"]}': p
+                        for p in productos_editar
+                    }
+
+                    seleccionado = st.selectbox(
+                        "Selecciona el producto que deseas editar",
+                        list(opciones_productos.keys()),
+                        key="producto_editar"
+                    )
+
+                    producto = opciones_productos[seleccionado]
+
+                    categorias = servicio.listar_categorias()
+                    unidades = servicio.listar_unidades()
+
+                    if categorias and unidades:
+
+                        with st.form("form_editar_producto"):
+
+                            nuevo_nombre = st.text_input(
+                                "Nombre",
+                                value=producto["Nombre"]
+                            )
+
+                            nueva_descripcion = st.text_area(
+                                "Descripción",
+                                value=producto["Descripcion"] or ""
+                            )
+
+                            opciones_cat = {
+                                c["nombre"]: c["id_categoria"]
+                                for c in categorias
+                            }
+
+                            opciones_uni = {
+                                f'{u["Nombre"]} ({u["Abreviatura"]})': u["Id_unidad"]
+                                for u in unidades
+                            }
+
+                            categoria_actual = next(
+                                (
+                                    nombre
+                                    for nombre, id_cat in opciones_cat.items()
+                                    if id_cat == producto["Id_categoria"]
+                                ),
+                                list(opciones_cat.keys())[0]
+                            )
+
+                            unidad_actual = next(
+                                (
+                                    nombre
+                                    for nombre, id_uni in opciones_uni.items()
+                                    if id_uni == producto["Id_unidad"]
+                                ),
+                                list(opciones_uni.keys())[0]
+                            )
+
+                            nueva_categoria = st.selectbox(
+                                "Categoría",
+                                list(opciones_cat.keys()),
+                                index=list(opciones_cat.keys()).index(categoria_actual)
+                            )
+
+                            nueva_unidad = st.selectbox(
+                                "Unidad de medida",
+                                list(opciones_uni.keys()),
+                                index=list(opciones_uni.keys()).index(unidad_actual)
+                            )
+
+                            actualizar = st.form_submit_button(
+                                "Guardar cambios",
+                                use_container_width=True
+                            )
+
+                            if actualizar:
+
+                                servicio.actualizar_producto(
+                                    producto["Id_producto"],
+                                    nuevo_nombre,
+                                    nueva_descripcion,
+                                    opciones_uni[nueva_unidad],
+                                    opciones_cat[nueva_categoria]
+                                )
+
+                                st.success("Producto actualizado correctamente.")
+                                st.rerun()
+
+                    else:
+                        st.warning(
+                            "Necesitas tener categorías y unidades registradas para editar."
+                        )
+
+                else:
+                    st.info("No hay productos registrados para editar.")
+
+            except Exception as error:
+                st.error(f"No se pudo editar el producto: {error}")
 
     # -----------------------------------
     # CATEGORÍAS
@@ -282,24 +308,26 @@ def render():
             else:
                 st.info("No hay categorías registradas.")
 
-            st.divider()
-            st.subheader("Registrar categoría")
+            if puede_gestionar:
 
-            with st.form("form_categoria"):
+                st.divider()
+                st.subheader("Registrar categoría")
 
-                nombre_categoria = st.text_input(
-                    "Nombre de la categoría"
-                )
+                with st.form("form_categoria"):
 
-                guardar_categoria = st.form_submit_button(
-                    "Guardar categoría",
-                    use_container_width=True
-                )
+                    nombre_categoria = st.text_input(
+                        "Nombre de la categoría"
+                    )
 
-                if guardar_categoria:
-                    servicio.crear_categoria(nombre_categoria)
-                    st.success("Categoría registrada correctamente.")
-                    st.rerun()
+                    guardar_categoria = st.form_submit_button(
+                        "Guardar categoría",
+                        use_container_width=True
+                    )
+
+                    if guardar_categoria:
+                        servicio.crear_categoria(nombre_categoria)
+                        st.success("Categoría registrada correctamente.")
+                        st.rerun()
 
         except Exception as error:
             st.error(f"Error en categorías: {error}")
@@ -332,33 +360,34 @@ def render():
             else:
                 st.info("No hay unidades registradas.")
 
-            st.divider()
-            st.subheader("Registrar unidad de medida")
+            if puede_gestionar:
 
-            with st.form("form_unidad"):
+                st.divider()
+                st.subheader("Registrar unidad de medida")
 
-                nombre_unidad = st.text_input(
-                    "Nombre de la unidad"
-                )
+                with st.form("form_unidad"):
 
-                abreviatura = st.text_input(
-                    "Abreviatura"
-                )
-
-                guardar_unidad = st.form_submit_button(
-                    "Guardar unidad",
-                    use_container_width=True
-                )
-
-                if guardar_unidad:
-                    servicio.crear_unidad(
-                        nombre_unidad,
-                        abreviatura
+                    nombre_unidad = st.text_input(
+                        "Nombre de la unidad"
                     )
 
-                    st.success("Unidad registrada correctamente.")
-                    st.rerun()
+                    abreviatura = st.text_input(
+                        "Abreviatura"
+                    )
+
+                    guardar_unidad = st.form_submit_button(
+                        "Guardar unidad",
+                        use_container_width=True
+                    )
+
+                    if guardar_unidad:
+                        servicio.crear_unidad(
+                            nombre_unidad,
+                            abreviatura
+                        )
+
+                        st.success("Unidad registrada correctamente.")
+                        st.rerun()
 
         except Exception as error:
-            st.error(f"Error en unidades de medida: {error}")
-
+            st.error(f"Error en unidades: {error}")
