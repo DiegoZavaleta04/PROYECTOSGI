@@ -13,6 +13,8 @@ ESTADO_INACTIVO = "Inactivo"
 # Quién ve el módulo en el menú se define en app.py (PERMISOS_MODULOS).
 ROLES_ADMINISTRAR = (5,)
 
+OPCIONES_ESTADO = ["Todos", "Activos", "Inactivos"]
+
 
 # ==============================
 # FUNCIONES DE BASE DE DATOS
@@ -243,7 +245,7 @@ def mostrar_empleado():
     # -----------------------------------
     st.subheader("Listado de empleados")
 
-    col1, col2, col3 = st.columns([2, 1, 1])
+    col1, col2, col3, col4 = st.columns([2, 1, 1, 1])
 
     with col1:
         busqueda = st.text_input(
@@ -291,11 +293,23 @@ def mostrar_empleado():
 
             id_sede_filtro = id_sede_usuario
 
+    with col4:
+        estado_filtro = st.selectbox(
+            "Filtrar por estado",
+            OPCIONES_ESTADO
+        )
+
     empleados = obtener_empleados(
         busqueda,
         opciones_rol[rol_filtro],
         id_sede_filtro
     )
+
+    # Filtro por estado (activos / inactivos)
+    if estado_filtro == "Activos":
+        empleados = [e for e in empleados if es_activo(e[6])]
+    elif estado_filtro == "Inactivos":
+        empleados = [e for e in empleados if not es_activo(e[6])]
 
     if empleados:
         tabla = pd.DataFrame(
