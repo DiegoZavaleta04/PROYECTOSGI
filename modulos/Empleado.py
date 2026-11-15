@@ -7,7 +7,9 @@ from config.conexion import obtener_conexion
 ESTADO_ACTIVO = "Activo"
 ESTADO_INACTIVO = "Inactivo"
 
-# Solo el administrador (rol 5) puede registrar y editar empleados.
+# Solo el administrador (rol 5) puede registrar y editar empleados,
+# y es el único que ve a los empleados de todas las sedes.
+# Los encargados solo ven a los empleados de su propia sede.
 # Quién ve el módulo en el menú se define en app.py (PERMISOS_MODULOS).
 ROLES_ADMINISTRAR = (5,)
 
@@ -203,8 +205,10 @@ def validar_datos(nombre, apellido, correo, contrasena, exigir_contrasena):
 def mostrar_empleado():
     st.header("Gestión de empleados")
 
-    # Rol del usuario con la sesión iniciada
+    # Rol y sede del usuario con la sesión iniciada
     id_rol_usuario = st.session_state.get("id_rol")
+    id_sede_usuario = st.session_state.get("id_sede")
+    es_administrador = id_rol_usuario in ROLES_ADMINISTRAR
 
     # Mensaje que se guarda antes de recargar la página
     mensaje = st.session_state.pop("mensaje_empleado", None)
@@ -223,6 +227,14 @@ def mostrar_empleado():
     if not sedes:
         st.warning(
             "Primero debe registrar una sede."
+        )
+        return
+
+    # Los encargados necesitan una sede para ver su listado
+    if not es_administrador and id_sede_usuario is None:
+        st.warning(
+            "No se pudo identificar su sede. "
+            "Cierre sesión y vuelva a iniciar sesión."
         )
         return
 
@@ -251,20 +263,38 @@ def mostrar_empleado():
         )
 
     with col3:
-        opciones_sede = {"Todas las sedes": None}
+        if es_administrador:
+            # El administrador puede ver todas las sedes
+            opciones_sede = {"Todas las sedes": None}
 
-        for sede in sedes:
-            opciones_sede[sede[1]] = sede[0]
+            for sede in sedes:
+                opciones_sede[sede[1]] = sede[0]
 
-        sede_filtro = st.selectbox(
-            "Filtrar por sede",
-            list(opciones_sede.keys())
-        )
+            sede_filtro = st.selectbox(
+                "Filtrar por sede",
+                list(opciones_sede.keys())
+            )
+
+            id_sede_filtro = opciones_sede[sede_filtro]
+        else:
+            # Los encargados solo ven su propia sede (bloqueada)
+            nombre_sede_usuario = next(
+                (s[1] for s in sedes if s[0] == id_sede_usuario),
+                "Mi sede"
+            )
+
+            st.selectbox(
+                "Sede",
+                [nombre_sede_usuario],
+                disabled=True
+            )
+
+            id_sede_filtro = id_sede_usuario
 
     empleados = obtener_empleados(
         busqueda,
         opciones_rol[rol_filtro],
-        opciones_sede[sede_filtro]
+        id_sede_filtro
     )
 
     if empleados:
@@ -308,7 +338,7 @@ def mostrar_empleado():
 
     # Solo el administrador puede registrar y editar empleados.
     # Los demás roles solo ven el listado, sin formularios.
-    if id_rol_usuario not in ROLES_ADMINISTRAR:
+    if not es_administrador:
         return
 
     st.divider()
