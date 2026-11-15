@@ -306,13 +306,9 @@ def mostrar_empleado():
             "No se encontraron empleados."
         )
 
-    # Solo el administrador puede registrar y editar empleados
+    # Solo el administrador puede registrar y editar empleados.
+    # Los demás roles solo ven el listado, sin formularios.
     if id_rol_usuario not in ROLES_ADMINISTRAR:
-        st.divider()
-        st.info(
-            "Solo el administrador puede registrar "
-            "y editar empleados."
-        )
         return
 
     st.divider()
