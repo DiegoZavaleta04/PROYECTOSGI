@@ -130,6 +130,48 @@ def obtener_sedes(busqueda=""):
     )
 
 
+def obtener_sedes_completas(busqueda=""):
+    """
+    Devuelve (columnas, filas) con TODAS las columnas de la tabla Sede,
+    sean cuales sean. Asi el listado muestra toda la informacion de la
+    sede sin tener que escribir cada columna a mano.
+    """
+    conexion = None
+    cursor = None
+
+    try:
+        conexion = obtener_conexion()
+
+        if conexion is None:
+            return [], []
+
+        cursor = conexion.cursor()
+        cursor.execute(
+            """
+            SELECT *
+            FROM Sede
+            WHERE nombre LIKE %s
+            ORDER BY nombre
+            """,
+            (f"%{busqueda.strip()}%",)
+        )
+
+        columnas = [c[0] for c in cursor.description]
+
+        return columnas, cursor.fetchall()
+
+    except Exception as error:
+        st.error(f"Error al consultar los datos: {error}")
+        return [], []
+
+    finally:
+        if cursor is not None:
+            cursor.close()
+
+        if conexion is not None and conexion.is_connected():
+            conexion.close()
+
+
 def nombre_repetido(nombre, id_sede=None):
     """True si ya existe otra sede con ese nombre."""
     filas = consultar(
@@ -182,13 +224,13 @@ def mostrar_listado():
         key="sede_busqueda"
     )
 
-    sedes = obtener_sedes(busqueda)
+    columnas, sedes = obtener_sedes_completas(busqueda)
 
     if sedes:
-        tabla = pd.DataFrame(
-            [(s[0], s[1]) for s in sedes],
-            columns=["ID", "Nombre"]
-        )
+        # Nombres de columna legibles: "id_sede" -> "Id sede"
+        encabezados = [c.replace("_", " ").capitalize() for c in columnas]
+
+        tabla = pd.DataFrame(sedes, columns=encabezados)
 
         st.dataframe(
             tabla,
