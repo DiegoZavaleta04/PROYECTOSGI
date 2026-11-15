@@ -10,8 +10,12 @@ CLAVE_USUARIO = "usuario"   # en tu sesion guarda el correo
 CLAVE_SEDE = "id_sede"
 CLAVE_ROL = "id_rol"
 
-# REVISA que coincida con el id del rol Administrador en phpMyAdmin
-ID_ROL_ADMINISTRADOR = 5
+# Roles que pueden vender y ver ventas:
+# 1 Encargado CD, 2 Encargado tienda, 3 Vendedor CD, 4 Vendedor tienda.
+# El Administrador (5) no puede vender ni ver las ventas.
+ROLES_VENDEN = (1, 2, 3, 4)
+
+METODOS_PAGO = ["Efectivo", "Tarjeta", "Transferencia"]
 
 # Nombres de las tablas EXACTAMENTE como aparecen en phpMyAdmin
 # (importan las mayusculas y minusculas)
@@ -20,11 +24,13 @@ T_SEDE = "Sede"
 T_CLIENTE = "CLIENTE"
 T_PRODUCTOS = "PRODUCTOS"
 T_UNIDAD = "UNIDAD_MEDIDA"
+T_INVENTARIO = "INVENTARIO"
 T_VENTAS = "VENTAS"
 T_DETALLE_VENTA = "DETALLE_VENTA"
 
-# Columna del DUI/NIT en la tabla de clientes (revisa en phpMyAdmin)
-C_CLIENTE_DOC = "DUI_NIT"
+# Columnas del DUI y del NIT en la tabla de clientes (revisa en phpMyAdmin)
+C_CLIENTE_DUI = "DUI"
+C_CLIENTE_NIT = "NIT"
 
 
 # ==============================
@@ -83,19 +89,26 @@ def obtener_nombre_sede(id_sede):
     return filas[0][0] if filas else ""
 
 
-def obtener_productos():
+def obtener_productos(id_sede):
+    """Solo los productos con existencia en el inventario de la sede."""
     return consultar(
         f"""
         SELECT
             p.Id_producto,
             p.Nombre,
             u.Abreviatura,
-            p.Id_unidad
-        FROM {T_PRODUCTOS} p
+            p.Id_unidad,
+            i.Existencia
+        FROM {T_INVENTARIO} i
+        INNER JOIN {T_PRODUCTOS} p
+            ON i.Id_producto = p.Id_producto
         INNER JOIN {T_UNIDAD} u
             ON p.Id_unidad = u.Id_unidad
+        WHERE i.Id_sede = %s
+          AND i.Existencia > 0
         ORDER BY p.Nombre
-        """
+        """,
+        (id_sede,)
     )
 
 
@@ -107,6 +120,7 @@ def obtener_ventas_recientes(id_sede):
             v.Fecha,
             c.Nombre,
             CONCAT(u.Nombre, ' ', u.Apellido),
+            v.Metodo_pago,
             COALESCE(SUM(d.Cantidad * d.Precio_venta), 0)
         FROM {T_VENTAS} v
         INNER JOIN {T_CLIENTE} c
@@ -116,7 +130,9 @@ def obtener_ventas_recientes(id_sede):
         LEFT JOIN {T_DETALLE_VENTA} d
             ON d.Id_venta = v.Id_venta
         WHERE v.Id_sede = %s
-        GROUP BY v.Id_venta, v.Fecha, c.Nombre, u.Nombre, u.Apellido
+        GROUP BY
+            v.Id_venta, v.Fecha, c.Nombre,
+            u.Nombre, u.Apellido, v.Metodo_pago
         ORDER BY v.Id_venta DESC
         LIMIT 20
         """,
@@ -124,17 +140,25 @@ def obtener_ventas_recientes(id_sede):
     )
 
 
-def registrar_venta(fecha, id_usuario, id_sede, datos_cliente, lineas):
+def registrar_venta(
+    fecha,
+    id_usuario,
+    id_sede,
+    metodo_pago,
+    datos_cliente,
+    lineas
+):
     """
-    Guarda el cliente, la venta y su detalle en una sola transaccion:
-    si algo falla, no se guarda nada.
+    Guarda el cliente, la venta, su detalle y descuenta el inventario
+    de la sede, todo en una sola transaccion: si algo falla,
+    no se guarda nada.
 
-    datos_cliente = (nombre, documento, telefono)
-    Si ya existe un cliente con ese DUI/NIT en la sede, se reutiliza
-    (y se actualizan su nombre y telefono); si no, se crea uno nuevo.
+    datos_cliente = (nombre, dui, nit, telefono)
+    El DUI, el NIT y el telefono son opcionales. Si ya existe un cliente
+    con ese DUI (o NIT) en la sede, se reutiliza; si no, se crea uno nuevo.
     Devuelve el Id de la venta, o None si hubo error.
     """
-    nombre, documento, telefono = datos_cliente
+    nombre, dui, nit, telefono = datos_cliente
 
     conexion = None
     cursor = None
@@ -148,48 +172,86 @@ def registrar_venta(fecha, id_usuario, id_sede, datos_cliente, lineas):
         cursor = conexion.cursor()
 
         # ---- Cliente: reutilizar si ya existe, o crearlo ----
-        cursor.execute(
-            f"""
-            SELECT Id_cliente
-            FROM {T_CLIENTE}
-            WHERE {C_CLIENTE_DOC} = %s AND Id_sede = %s
-            LIMIT 1
-            """,
-            (documento, id_sede)
-        )
-        fila = cursor.fetchone()
+        fila = None
+
+        if dui:
+            cursor.execute(
+                f"""
+                SELECT Id_cliente
+                FROM {T_CLIENTE}
+                WHERE {C_CLIENTE_DUI} = %s AND Id_sede = %s
+                LIMIT 1
+                """,
+                (dui, id_sede)
+            )
+            fila = cursor.fetchone()
+
+        if fila is None and nit:
+            cursor.execute(
+                f"""
+                SELECT Id_cliente
+                FROM {T_CLIENTE}
+                WHERE {C_CLIENTE_NIT} = %s AND Id_sede = %s
+                LIMIT 1
+                """,
+                (nit, id_sede)
+            )
+            fila = cursor.fetchone()
+
+        if fila is None and not dui and not nit:
+            # Sin documentos: se reutiliza un cliente con el mismo
+            # nombre que tampoco tenga documentos
+            cursor.execute(
+                f"""
+                SELECT Id_cliente
+                FROM {T_CLIENTE}
+                WHERE Nombre = %s
+                  AND ({C_CLIENTE_DUI} IS NULL OR {C_CLIENTE_DUI} = '')
+                  AND ({C_CLIENTE_NIT} IS NULL OR {C_CLIENTE_NIT} = '')
+                  AND Id_sede = %s
+                LIMIT 1
+                """,
+                (nombre, id_sede)
+            )
+            fila = cursor.fetchone()
 
         if fila:
             id_cliente = fila[0]
             cursor.execute(
                 f"""
                 UPDATE {T_CLIENTE}
-                SET Nombre = %s, Telefono = %s
+                SET Nombre = %s,
+                    Telefono = COALESCE(%s, Telefono),
+                    {C_CLIENTE_DUI} = COALESCE(%s, {C_CLIENTE_DUI}),
+                    {C_CLIENTE_NIT} = COALESCE(%s, {C_CLIENTE_NIT})
                 WHERE Id_cliente = %s
                 """,
-                (nombre, telefono, id_cliente)
+                (nombre, telefono, dui, nit, id_cliente)
             )
         else:
             cursor.execute(
                 f"""
                 INSERT INTO {T_CLIENTE}
-                (Nombre, {C_CLIENTE_DOC}, Telefono, Id_sede)
-                VALUES (%s, %s, %s, %s)
+                (Nombre, {C_CLIENTE_DUI}, {C_CLIENTE_NIT}, Telefono, Id_sede)
+                VALUES (%s, %s, %s, %s, %s)
                 """,
-                (nombre, documento, telefono, id_sede)
+                (nombre, dui, nit, telefono, id_sede)
             )
             id_cliente = cursor.lastrowid
 
+        # ---- Venta (siempre asociada a la sede del usuario) ----
         cursor.execute(
             f"""
-            INSERT INTO {T_VENTAS} (Fecha, Id_usuario, Id_sede, Id_cliente)
-            VALUES (%s, %s, %s, %s)
+            INSERT INTO {T_VENTAS}
+            (Fecha, Id_usuario, Id_sede, Id_cliente, Metodo_pago)
+            VALUES (%s, %s, %s, %s, %s)
             """,
-            (fecha, id_usuario, id_sede, id_cliente)
+            (fecha, id_usuario, id_sede, id_cliente, metodo_pago)
         )
 
         id_venta = cursor.lastrowid
 
+        # ---- Detalle ----
         cursor.executemany(
             f"""
             INSERT INTO {T_DETALLE_VENTA}
@@ -199,17 +261,50 @@ def registrar_venta(fecha, id_usuario, id_sede, datos_cliente, lineas):
             [
                 (
                     id_venta,
-                    l["id_producto"],
-                    l["cantidad"],
-                    l["id_unidad"],
-                    l["precio"]
+                    linea["id_producto"],
+                    linea["cantidad"],
+                    linea["id_unidad"],
+                    linea["precio"]
                 )
-                for l in lineas
+                for linea in lineas
             ]
         )
 
+        # ---- Salida del inventario de la sede ----
+        for linea in lineas:
+            cursor.execute(
+                f"""
+                UPDATE {T_INVENTARIO}
+                SET Existencia = Existencia - %s,
+                    Id_venta = %s
+                WHERE Id_producto = %s
+                  AND Id_sede = %s
+                  AND Existencia >= %s
+                """,
+                (
+                    linea["cantidad"],
+                    id_venta,
+                    linea["id_producto"],
+                    id_sede,
+                    linea["cantidad"]
+                )
+            )
+
+            if cursor.rowcount == 0:
+                raise ValueError(
+                    "No hay existencia suficiente de "
+                    f"{linea['producto']} en esta sede."
+                )
+
         conexion.commit()
         return id_venta
+
+    except ValueError as error:
+        if conexion is not None:
+            conexion.rollback()
+
+        st.warning(str(error))
+        return None
 
     except Exception as error:
         if conexion is not None:
@@ -231,6 +326,47 @@ def registrar_venta(fecha, id_usuario, id_sede, datos_cliente, lineas):
             conexion.close()
 
 
+def documento_valido(valor, maximo):
+    """Solo números y guiones, con una longitud máxima."""
+    return (
+        len(valor) <= maximo
+        and all(c.isdigit() or c == "-" for c in valor)
+    )
+
+
+# ==============================
+# VENTAS RECIENTES DE LA SEDE
+# ==============================
+def mostrar_ventas_recientes(id_sede):
+    st.subheader("Ventas recientes de la sede")
+
+    ventas = obtener_ventas_recientes(id_sede)
+
+    if ventas:
+        tabla_ventas = pd.DataFrame(
+            [
+                (v[0], v[1], v[2], v[3], v[4], float(v[5]))
+                for v in ventas
+            ],
+            columns=[
+                "ID",
+                "Fecha",
+                "Cliente",
+                "Vendedor",
+                "Método de pago",
+                "Total ($)"
+            ]
+        )
+
+        st.dataframe(
+            tabla_ventas,
+            use_container_width=True,
+            hide_index=True
+        )
+    else:
+        st.info("Aún no hay ventas registradas en esta sede.")
+
+
 # ==============================
 # PANTALLA DEL MODULO
 # ==============================
@@ -242,9 +378,10 @@ def mostrar_venta():
     id_sede = st.session_state.get(CLAVE_SEDE)
     correo = st.session_state.get(CLAVE_USUARIO)
 
-    if id_rol == ID_ROL_ADMINISTRADOR:
+    # El administrador no puede vender ni ver las ventas
+    if id_rol not in ROLES_VENDEN:
         st.warning(
-            "El administrador no puede registrar ventas."
+            "No tiene permiso para registrar ni ver ventas."
         )
         return
 
@@ -278,23 +415,30 @@ def mostrar_venta():
     # (debe hacerse antes de crear los campos)
     if st.session_state.pop("limpiar_cliente_venta", False):
         st.session_state["venta_cli_nombre"] = ""
-        st.session_state["venta_cli_doc"] = ""
+        st.session_state["venta_cli_dui"] = ""
+        st.session_state["venta_cli_nit"] = ""
         st.session_state["venta_cli_tel"] = ""
+        st.session_state["venta_metodo_pago"] = None
 
-    productos = obtener_productos()
+    # Solo los productos con existencia en la sede del usuario
+    productos = obtener_productos(id_sede)
 
     if not productos:
         st.warning(
-            "No hay productos registrados."
+            "No hay productos con existencia en esta sede."
         )
+        st.divider()
+        mostrar_ventas_recientes(id_sede)
         return
 
+    existencias = {p[0]: float(p[4]) for p in productos}
+
     # -----------------------------------
-    # DATOS DE LA VENTA
+    # DATOS DEL CLIENTE
     # -----------------------------------
     st.subheader("Datos del cliente")
 
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns([2, 1, 1, 1])
 
     with col1:
         cliente_nombre = st.text_input(
@@ -304,38 +448,57 @@ def mostrar_venta():
         )
 
     with col2:
-        cliente_doc = st.text_input(
-            "DUI/NIT",
-            max_chars=20,
-            key="venta_cli_doc"
+        cliente_dui = st.text_input(
+            "DUI (opcional)",
+            max_chars=10,
+            key="venta_cli_dui"
         )
 
     with col3:
+        cliente_nit = st.text_input(
+            "NIT (opcional)",
+            max_chars=17,
+            key="venta_cli_nit"
+        )
+
+    with col4:
         cliente_tel = st.text_input(
             "Teléfono (opcional)",
             max_chars=20,
             key="venta_cli_tel"
         )
 
+    # -----------------------------------
+    # DATOS DE LA VENTA
+    # -----------------------------------
     st.subheader("Datos de la venta")
 
-    col4, col5, col6 = st.columns(3)
-
-    with col4:
-        fecha = st.date_input("Fecha de la venta")
+    col5, col6, col7, col8 = st.columns(4)
 
     with col5:
+        fecha = st.date_input("Fecha de la venta")
+
+    with col6:
         st.text_input(
             "Sede",
             value=nombre_sede,
             disabled=True
         )
 
-    with col6:
+    with col7:
         st.text_input(
             "Vendedor",
             value=nombre_vendedor,
             disabled=True
+        )
+
+    with col8:
+        metodo_pago = st.selectbox(
+            "Método de pago",
+            METODOS_PAGO,
+            index=None,
+            placeholder="Seleccione...",
+            key="venta_metodo_pago"
         )
 
     # -----------------------------------
@@ -349,7 +512,10 @@ def mostrar_venta():
         producto = st.selectbox(
             "Producto",
             productos,
-            format_func=lambda p: f"{p[0]} - {p[1]} ({p[2]})"
+            format_func=lambda p: (
+                f"{p[0]} - {p[1]} ({p[2]}) "
+                f"- Existencia: {float(p[4]):,.2f}"
+            )
         )
 
     with colc:
@@ -369,21 +535,30 @@ def mostrar_venta():
         )
 
     if st.button("Agregar al detalle"):
+        lineas = st.session_state["lineas_venta"]
+
+        # Un producto no puede repetirse en la misma venta
+        # (la llave de Detalle_venta es Id_venta + Id_producto),
+        # asi que si ya existe se suma la cantidad.
+        existente = next(
+            (l for l in lineas if l["id_producto"] == producto[0]),
+            None
+        )
+
+        ya_agregado = existente["cantidad"] if existente else 0
+        disponible = existencias[producto[0]] - ya_agregado
+
         if cantidad <= 0:
             st.warning("La cantidad debe ser mayor que 0.")
         elif precio <= 0:
             st.warning("El precio debe ser mayor que 0.")
-        else:
-            lineas = st.session_state["lineas_venta"]
-
-            # Un producto no puede repetirse en la misma venta
-            # (la llave de Detalle_venta es Id_venta + Id_producto),
-            # asi que si ya existe se suma la cantidad.
-            existente = next(
-                (l for l in lineas if l["id_producto"] == producto[0]),
-                None
+        elif cantidad > disponible:
+            st.warning(
+                f"Solo puede agregar {max(disponible, 0):,.2f} "
+                f"{producto[2]} más: es la existencia disponible "
+                "en la sede."
             )
-
+        else:
             if existente:
                 existente["cantidad"] += cantidad
                 existente["precio"] = precio
@@ -457,12 +632,23 @@ def mostrar_venta():
     # -----------------------------------
     if st.button("Registrar venta"):
         nombre_cli = cliente_nombre.strip()
-        doc_cli = cliente_doc.strip()
+        dui_cli = cliente_dui.strip()
+        nit_cli = cliente_nit.strip()
         tel_cli = cliente_tel.strip()
 
-        if nombre_cli == "" or doc_cli == "":
+        if nombre_cli == "":
             st.warning(
-                "Debe ingresar el nombre y el DUI/NIT del cliente."
+                "Debe ingresar el nombre del cliente."
+            )
+        elif dui_cli != "" and not documento_valido(dui_cli, 10):
+            st.warning(
+                "El DUI solo puede tener números y guiones "
+                "(máximo 10 caracteres)."
+            )
+        elif nit_cli != "" and not documento_valido(nit_cli, 17):
+            st.warning(
+                "El NIT solo puede tener números y guiones "
+                "(máximo 17 caracteres)."
             )
         elif tel_cli != "" and not all(
             c.isdigit() or c in " +-()" for c in tel_cli
@@ -470,6 +656,10 @@ def mostrar_venta():
             st.warning(
                 "El teléfono solo puede tener números, "
                 "espacios, + - ( )."
+            )
+        elif metodo_pago is None:
+            st.warning(
+                "Debe seleccionar el método de pago."
             )
         elif not lineas:
             st.warning(
@@ -480,7 +670,13 @@ def mostrar_venta():
                 fecha,
                 id_usuario,
                 id_sede,       # siempre la sede del usuario
-                (nombre_cli, doc_cli, tel_cli or None),
+                metodo_pago,
+                (
+                    nombre_cli,
+                    dui_cli or None,
+                    nit_cli or None,
+                    tel_cli or None
+                ),
                 lineas
             )
 
@@ -499,33 +695,4 @@ def mostrar_venta():
 
     st.divider()
 
-    # -----------------------------------
-    # VENTAS RECIENTES DE LA SEDE
-    # -----------------------------------
-    st.subheader("Ventas recientes de la sede")
-
-    ventas = obtener_ventas_recientes(id_sede)
-
-    if ventas:
-        tabla_ventas = pd.DataFrame(
-            [
-                (v[0], v[1], v[2], v[3], float(v[4]))
-                for v in ventas
-            ],
-            columns=[
-                "ID",
-                "Fecha",
-                "Cliente",
-                "Vendedor",
-                "Total ($)"
-            ]
-        )
-
-        st.dataframe(
-            tabla_ventas,
-            use_container_width=True,
-            hide_index=True
-        )
-    else:
-        st.info("Aún no hay ventas registradas en esta sede.")
-
+    mostrar_ventas_recientes(id_sede)
