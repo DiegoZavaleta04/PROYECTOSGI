@@ -373,14 +373,6 @@ def mostrar_compra():
     # ---- Permisos del usuario actual ----
     sede_usuario, puede_registrar = obtener_permisos()
     
-    st.write("DEBUG:", {
-    "id_rol": st.session_state.get(CLAVE_ROL),
-    "id_sede": st.session_state.get(CLAVE_SEDE),
-    "rol": obtener_nombre_rol(),
-    "sede_usuario": sede_usuario,
-    "puede_registrar": puede_registrar,
-    })
-    
     if sede_usuario is None:
         st.error(
             "No tiene permisos para ver las compras."
