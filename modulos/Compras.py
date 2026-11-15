@@ -4,11 +4,75 @@ import pandas as pd
 import streamlit as st
 from config.conexion import obtener_conexion
 
-# Roles que pueden registrar compras:
-# 1 = Encargado CD, 2 = Encargado tienda
-ROLES_PUEDEN_COMPRAR = (1, 2)
+
+# ==============================
+# PERMISOS
+# ==============================
+# Claves de st.session_state donde guardas los datos del usuario
+# al iniciar sesion. Cambialas si en tu login se llaman distinto.
+CLAVE_ROL = "id_rol"
+CLAVE_SEDE = "id_sede"
+
+# Nombres de los roles tal como estan en la tabla Rol (se comparan sin
+# importar mayusculas o minusculas). Se usan NOMBRES y no numeros de id
+# para que el modulo no dependa del orden en que se crearon los roles.
+# !! REVISA que coincidan con tu tabla Rol (SELECT * FROM Rol;) !!
+ROL_ENCARGADO_CD = "encargado cd"
+ROL_VENDEDOR_CD = "vendedor cd"
+ROL_ENCARGADO_TIENDA = "encargado tienda"
+ROL_VENDEDOR_TIENDA = "vendedor tienda"
+
+# El rol Administrador NO aparece: no tiene acceso a las compras.
 
 METODOS_PAGO = ["Efectivo", "Tarjeta", "Transferencia"]
+
+
+def obtener_nombre_rol():
+    """Devuelve el nombre del rol del usuario (en minusculas), o None."""
+    id_rol = st.session_state.get(CLAVE_ROL)
+
+    if id_rol is None:
+        return None
+
+    # Se guarda en la sesion para no consultar la base en cada recarga
+    clave = f"_nombre_rol_{id_rol}"
+
+    if clave not in st.session_state:
+        filas = consultar(
+            "SELECT Nombre FROM Rol WHERE Id_rol = %s",
+            (id_rol,)
+        )
+        st.session_state[clave] = (
+            filas[0][0].strip().lower() if filas else None
+        )
+
+    return st.session_state[clave]
+
+
+def obtener_permisos():
+    """
+    Devuelve (id_sede, puede_registrar).
+
+    - Administrador: sin acceso a las compras.
+    - Encargado del CD / de tienda: ve y registra las compras de SU sede.
+    - Vendedor del CD / de tienda: solo ve las compras de SU sede.
+
+    Si el usuario no tiene acceso devuelve (None, False).
+    """
+    id_sede = st.session_state.get(CLAVE_SEDE)
+    rol = obtener_nombre_rol()
+
+    if rol is None or id_sede is None:
+        return None, False
+
+    if rol in (ROL_ENCARGADO_CD, ROL_ENCARGADO_TIENDA):
+        return id_sede, True
+
+    if rol in (ROL_VENDEDOR_CD, ROL_VENDEDOR_TIENDA):
+        return id_sede, False
+
+    # Administrador, rol desconocido o sin sede asignada: sin acceso
+    return None, False
 
 
 # ==============================
@@ -46,15 +110,24 @@ def consultar(consulta, parametros=()):
             conexion.close()
 
 
-def obtener_proveedores():
+def obtener_proveedores(id_sede):
+    """Solo los proveedores registrados por la sede indicada."""
     return consultar(
-        "SELECT Id_proveedor, Nombre FROM PROVEEDORES ORDER BY Nombre"
+        """
+        SELECT Id_proveedor, Nombre
+        FROM PROVEEDORES
+        WHERE Id_sede = %s
+        ORDER BY Nombre
+        """,
+        (id_sede,)
     )
 
 
-def obtener_sedes():
+def obtener_sedes(id_sede):
+    """Solo la sede indicada (la del usuario)."""
     return consultar(
-        "SELECT id_sede, nombre FROM Sede ORDER BY nombre"
+        "SELECT id_sede, nombre FROM Sede WHERE id_sede = %s",
+        (id_sede,)
     )
 
 
@@ -129,7 +202,8 @@ def obtener_compras(busqueda="", id_proveedor=None, id_sede=None):
     )
 
 
-def obtener_detalle(id_compra):
+def obtener_detalle(id_compra, id_sede):
+    """El detalle de una compra, solo si pertenece a la sede indicada."""
     return consultar(
         """
         SELECT
@@ -139,14 +213,17 @@ def obtener_detalle(id_compra):
             d.precio_compra,
             d.Cantidad * d.precio_compra
         FROM DETALLE_COMPRA d
+        INNER JOIN COMPRAS c
+            ON d.Id_compra = c.Id_compra
         INNER JOIN PRODUCTOS p
             ON d.Id_producto = p.Id_producto
         INNER JOIN UNIDAD_MEDIDA u
             ON p.Id_unidad = u.Id_unidad
         WHERE d.Id_compra = %s
+          AND c.Id_sede = %s
         ORDER BY p.Nombre
         """,
-        (id_compra,)
+        (id_compra, id_sede)
     )
 
 
@@ -173,6 +250,22 @@ def registrar_compra(
             return None
 
         cursor = conexion.cursor()
+
+        # Seguridad: el proveedor debe pertenecer a la sede de la compra
+        cursor.execute(
+            """
+            SELECT 1
+            FROM PROVEEDORES
+            WHERE Id_proveedor = %s AND Id_sede = %s
+            LIMIT 1
+            """,
+            (id_proveedor, id_sede)
+        )
+
+        if cursor.fetchone() is None:
+            raise ValueError(
+                "El proveedor no pertenece a la sede de la compra."
+            )
 
         cursor.execute(
             """
@@ -224,15 +317,14 @@ def registrar_compra(
                     (linea["cantidad"], id_compra, registro[0])
                 )
             else:
-                # --- LINEAS A MODIFICAR (A partir de aquí) ---
-                # 1. Buscamos el Id_unidad que le pertenece al producto
+                # Buscamos el Id_unidad que le pertenece al producto
                 cursor.execute(
                     "SELECT Id_unidad FROM PRODUCTOS WHERE Id_producto = %s LIMIT 1",
                     (linea["id_producto"],)
                 )
-                id_unidad_producto = cursor.fetchone()[0] # Obtenemos el número del ID
+                id_unidad_producto = cursor.fetchone()[0]
 
-                # 2. Insertamos en INVENTARIO incluyendo la columna Id_unidad
+                # Insertamos en INVENTARIO incluyendo la columna Id_unidad
                 cursor.execute(
                     """
                     INSERT INTO INVENTARIO
@@ -244,7 +336,7 @@ def registrar_compra(
                         linea["cantidad"],
                         id_compra,
                         id_sede,
-                        id_unidad_producto  # <-- El valor que faltaba
+                        id_unidad_producto
                     )
                 )
 
@@ -278,6 +370,15 @@ def registrar_compra(
 def mostrar_compra():
     st.header("Gestión de compras")
 
+    # ---- Permisos del usuario actual ----
+    sede_usuario, puede_registrar = obtener_permisos()
+
+    if sede_usuario is None:
+        st.error(
+            "No tiene permisos para ver las compras."
+        )
+        return
+
     # Mensaje que se guarda antes de recargar la página
     mensaje = st.session_state.pop("mensaje_compra", None)
     if mensaje:
@@ -286,18 +387,13 @@ def mostrar_compra():
     if "lineas_compra" not in st.session_state:
         st.session_state["lineas_compra"] = []
 
-    proveedores = obtener_proveedores()
-    sedes = obtener_sedes()
-
-    if not proveedores:
-        st.warning(
-            "Primero debe registrar un proveedor."
-        )
-        return
+    # Solo la sede del usuario y los proveedores de esa sede
+    sedes = obtener_sedes(sede_usuario)
+    proveedores = obtener_proveedores(sede_usuario)
 
     if not sedes:
         st.warning(
-            "Primero debe registrar una sede."
+            "No se encontró la sede del usuario."
         )
         return
 
@@ -326,20 +422,17 @@ def mostrar_compra():
         )
 
     with col3:
-        opciones_sede = {"Todas las sedes": None}
-
-        for sede in sedes:
-            opciones_sede[sede[1]] = sede[0]
-
-        sede_filtro = st.selectbox(
-            "Filtrar por sede",
-            list(opciones_sede.keys())
+        # Filtro fijo: cada usuario solo ve las compras de su sede
+        st.text_input(
+            "Sede",
+            value=sedes[0][1],
+            disabled=True
         )
 
     compras = obtener_compras(
         busqueda,
         opciones_proveedor[proveedor_filtro],
-        opciones_sede[sede_filtro]
+        sede_usuario
     )
 
     if compras:
@@ -385,7 +478,7 @@ def mostrar_compra():
             key="compra_detalle"
         )
 
-        detalle = obtener_detalle(compra[0])
+        detalle = obtener_detalle(compra[0], sede_usuario)
 
         if detalle:
             tabla_detalle = pd.DataFrame(
@@ -426,6 +519,10 @@ def mostrar_compra():
             "No se encontraron compras."
         )
 
+    # Los vendedores solo consultan: aqui termina su pantalla
+    if not puede_registrar:
+        return
+
     st.divider()
 
     # -----------------------------------
@@ -433,10 +530,10 @@ def mostrar_compra():
     # -----------------------------------
     st.subheader("Registrar nueva compra")
 
-    if st.session_state.get("id_rol") not in ROLES_PUEDEN_COMPRAR:
-        st.info(
-            "Solo los encargados del CD y de las tiendas "
-            "pueden registrar compras."
+    if not proveedores:
+        st.warning(
+            "Su sede no tiene proveedores registrados. "
+            "Primero debe registrar un proveedor."
         )
         return
 
@@ -447,15 +544,6 @@ def mostrar_compra():
             "Primero debe registrar productos."
         )
         return
-
-    # La sede del usuario aparece seleccionada por defecto
-    indice_sede = next(
-        (
-            i for i, s in enumerate(sedes)
-            if s[0] == st.session_state.get("id_sede")
-        ),
-        0
-    )
 
     col1, col2 = st.columns(2)
 
@@ -474,11 +562,11 @@ def mostrar_compra():
         )
 
     with col2:
-        sede = st.selectbox(
+        # La compra siempre se registra en la sede del usuario
+        st.text_input(
             "Sede",
-            sedes,
-            index=indice_sede,
-            format_func=lambda s: s[1],
+            value=sedes[0][1],
+            disabled=True,
             key="compra_sede"
         )
 
@@ -586,7 +674,7 @@ def mostrar_compra():
                 id_compra = registrar_compra(
                     proveedor[0],
                     id_usuario,
-                    sede[0],
+                    sede_usuario,
                     fecha,
                     metodo_pago,
                     lineas
