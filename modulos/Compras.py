@@ -1,4 +1,3 @@
-
 from datetime import date
 
 import pandas as pd
@@ -19,6 +18,20 @@ ROL_ENCARGADO_TIENDA = "encargado tienda"
 ROL_VENDEDOR_TIENDA = "vendedor tienda"
 
 METODOS_PAGO = ["Efectivo", "Tarjeta", "Transferencia"]
+
+
+# ==============================
+# CONVERSIONES DE PRESENTACION
+# ==============================
+# Abreviaturas (en minusculas) con las que tienes registrada la libra en la
+# tabla UNIDAD_MEDIDA. !! REVISA con: SELECT * FROM UNIDAD_MEDIDA; !!
+UNIDADES_LIBRA = ("lb", "lbs", "libra", "libras")
+
+# Un quintal equivale a 100 libras.
+LIBRAS_POR_QUINTAL = 100
+
+PRESENTACION_QUINTAL = "Quintal (100 lb)"
+PRESENTACION_CAJA = "Caja / lote (indicar unidades que trae)"
 
 
 # ==============================
@@ -298,7 +311,8 @@ def registrar_compra(
         # Registrar detalle y actualizar inventario
         for linea in lineas:
 
-            # Guardar únicamente unidades individuales
+            # Se guarda siempre en la unidad de venta del producto
+            # (ya convertida: libras, unidades, etc.)
             cursor.execute(
                 """
                 INSERT INTO DETALLE_COMPRA
@@ -610,128 +624,121 @@ def mostrar_compra():
 
     st.markdown("**Productos de la compra**")
 
-    col1, col2 = st.columns([3, 1])
+    producto = st.selectbox(
+        "Producto",
+        productos,
+        format_func=lambda p: f"{p[0]} - {p[1]} ({p[2]})",
+        key="compra_producto"
+    )
 
-    with col1:
-
-        producto = st.selectbox(
-            "Producto",
-            productos,
-            format_func=lambda p: f"{p[0]} - {p[1]} ({p[2]})",
-            key="compra_producto"
-        )
-
-    with col2:
-
-        lote_activo = st.checkbox(
-            "Comprar por lote",
-            value=False,
-            key="compra_lote_activo"
-        )
+    unidad_producto = producto[2]
+    es_libra = str(unidad_producto).strip().lower() in UNIDADES_LIBRA
 
     # =================================
-    # CANTIDADES Y PRECIOS
+    # PRESENTACION DE LA COMPRA
     # =================================
+    # El inventario siempre se guarda en la unidad en que se vende el
+    # producto. Aqui se indica en que presentacion se compro y el sistema
+    # hace la conversion.
 
-    if lote_activo:
+    texto_directo = f"Directo ({unidad_producto})"
+
+    opciones_presentacion = [texto_directo]
+
+    # El quintal solo tiene sentido en productos que se venden por libra
+    if es_libra:
+        opciones_presentacion.append(PRESENTACION_QUINTAL)
+
+    opciones_presentacion.append(PRESENTACION_CAJA)
+
+    presentacion = st.selectbox(
+        "¿En qué presentación compró el producto?",
+        opciones_presentacion,
+        key="compra_presentacion"
+    )
+
+    if presentacion == PRESENTACION_QUINTAL:
+
+        clave = "quintal"
+        factor = float(LIBRAS_POR_QUINTAL)
+        etiqueta_cantidad = "Cantidad de quintales"
+        etiqueta_precio = "Precio por quintal ($)"
 
         st.info(
-            "Indique cuántas unidades contiene cada lote "
-            "y cuántos lotes está comprando."
+            f"1 quintal = {LIBRAS_POR_QUINTAL} libras. "
+            "El sistema lo convierte automáticamente."
         )
 
-        col1, col2, col3 = st.columns(3)
+    elif presentacion == PRESENTACION_CAJA:
 
-        with col1:
+        clave = "caja"
+        etiqueta_cantidad = "Cantidad de cajas"
+        etiqueta_precio = "Precio por caja ($)"
 
-            unidades_por_lote = st.number_input(
-                "Unidades por lote",
-                min_value=1.0,
-                value=2.0,
-                step=1.0,
-                key="compra_unidades_lote"
-            )
-
-        with col2:
-
-            cantidad_lotes = st.number_input(
-                "Cantidad de lotes",
-                min_value=0.0,
-                value=0.0,
-                step=1.0,
-                key="compra_cantidad_lotes"
-            )
-
-        with col3:
-
-            precio_ingresado = st.number_input(
-                "Precio por lote ($)",
-                min_value=0.0,
-                value=0.0,
-                step=0.05,
-                format="%.2f",
-                key="compra_precio_lote"
-            )
-
-        # Conversión automática
-        cantidad_final = cantidad_lotes * unidades_por_lote
-
-        if unidades_por_lote > 0:
-            precio_unitario = precio_ingresado / unidades_por_lote
-        else:
-            precio_unitario = 0.0
-
-        st.write(
-            f"**Cantidad que ingresará al inventario:** "
-            f"{cantidad_final:,.2f} unidades"
+        st.info(
+            "Indique cuántas unidades trae cada caja. "
+            "Puede cambiar según el producto."
         )
 
-        st.write(
-            f"**Precio equivalente por unidad:** "
-            f"${precio_unitario:,.4f}"
-        )
-
-        st.write(
-            f"**Total de la compra:** "
-            f"${cantidad_lotes * precio_ingresado:,.2f}"
+        factor = st.number_input(
+            f"Unidades ({unidad_producto}) que trae cada caja",
+            min_value=1.0,
+            value=1.0,
+            step=1.0,
+            key="compra_unidades_caja"
         )
 
     else:
 
-        st.info(
-            "Ingrese directamente la cantidad de unidades "
-            "y el precio por cada unidad."
+        clave = "directo"
+        factor = 1.0
+        etiqueta_cantidad = f"Cantidad ({unidad_producto})"
+        etiqueta_precio = f"Precio por {unidad_producto} ($)"
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+
+        cantidad_presentacion = st.number_input(
+            etiqueta_cantidad,
+            min_value=0.0,
+            value=0.0,
+            step=1.0,
+            key=f"compra_cantidad_{clave}"
         )
 
-        col1, col2 = st.columns(2)
+    with col2:
 
-        with col1:
+        precio_presentacion = st.number_input(
+            etiqueta_precio,
+            min_value=0.0,
+            value=0.0,
+            step=0.05,
+            format="%.2f",
+            key=f"compra_precio_{clave}"
+        )
 
-            cantidad_final = st.number_input(
-                "Cantidad de unidades",
-                min_value=0.0,
-                value=0.0,
-                step=1.0,
-                key="compra_cantidad_unidades"
-            )
+    # Conversion a la unidad de venta
+    cantidad_final = cantidad_presentacion * factor
+    precio_unitario = precio_presentacion / factor
+    precio_ingresado = precio_presentacion
 
-        with col2:
-
-            precio_unitario = st.number_input(
-                "Precio por unidad ($)",
-                min_value=0.0,
-                value=0.0,
-                step=0.05,
-                format="%.2f",
-                key="compra_precio_unidad"
-            )
-
-        precio_ingresado = precio_unitario
+    if factor != 1:
 
         st.write(
-            f"**Total de la compra:** "
-            f"${cantidad_final * precio_unitario:,.2f}"
+            f"**Ingresará al inventario:** "
+            f"{cantidad_final:,.2f} {unidad_producto}"
         )
+
+        st.write(
+            f"**Precio equivalente por {unidad_producto}:** "
+            f"${precio_unitario:,.4f}"
+        )
+
+    st.write(
+        f"**Total de la compra de este producto:** "
+        f"${cantidad_presentacion * precio_presentacion:,.2f}"
+    )
 
     # =================================
     # AGREGAR PRODUCTO AL DETALLE
@@ -765,7 +772,7 @@ def mostrar_compra():
 
         else:
 
-            # Guardamos solamente las unidades individuales
+            # Se guarda la cantidad ya convertida a la unidad de venta
             st.session_state["lineas_compra"].append(
                 {
                     "id_producto": producto[0],
