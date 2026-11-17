@@ -1,430 +1,654 @@
+from datetime import date
 
 import pandas as pd
 import streamlit as st
-
 from config.conexion import obtener_conexion
+from config.movimientos_inventario import sumar_existencia
 
 
-# ==========================================================
-# 1. ROLES Y PERMISOS
-# ==========================================================
+# ==============================
+# PERMISOS
+# ==============================
+# Claves de st.session_state donde guardas los datos del usuario
+# al iniciar sesion. Cambialas si en tu login se llaman distinto.
+CLAVE_ROL = "id_rol"
+CLAVE_SEDE = "id_sede"
 
-ROL_ENCARGADO_CD = 1
-ROL_ENCARGADO_TIENDA = 2
-ROL_VENDEDOR_CD = 3
-ROL_VENDEDOR_TIENDA = 4
-ROL_ADMINISTRADOR = 5
+# Nombres de los roles tal como estan en la tabla Rol (se comparan sin
+# importar mayusculas o minusculas). Se usan NOMBRES y no numeros de id
+# para que el modulo no dependa del orden en que se crearon los roles.
+# !! REVISA que coincidan con tu tabla Rol (SELECT * FROM Rol;) !!
+ROL_ENCARGADO_CD = "encargado cd"
+ROL_VENDEDOR_CD = "vendedor cd"
+ROL_ENCARGADO_TIENDA = "encargado tienda"
+ROL_VENDEDOR_TIENDA = "vendedor tienda"
 
-ROLES_PUEDEN_VER = (1, 2, 3, 4)
-ROLES_PUEDEN_MOVER = (1, 2)
+# El rol Administrador NO aparece: no tiene acceso a las compras.
 
-TIPOS_MOVIMIENTO = ["Entrada", "Salida", "Ajuste"]
-
-
-# ==========================================================
-# 2. FUNCIONES DE CONEXIÓN
-# ==========================================================
-
-def consultar(sql, parametros=None):
-
-    conexion = obtener_conexion()
-
-    try:
-        cursor = conexion.cursor()
-        cursor.execute(sql, parametros or ())
-        resultados = cursor.fetchall()
-        cursor.close()
-
-        return resultados
-
-    except Exception as e:
-        st.error(f"Error al consultar los datos: {e}")
-        return []
-
-    finally:
-        conexion.close()
+METODOS_PAGO = ["Efectivo", "Tarjeta", "Transferencia"]
 
 
-def ejecutar(sql, parametros=None):
+def obtener_nombre_rol():
+    """Devuelve el nombre del rol del usuario (en minusculas), o None."""
+    id_rol = st.session_state.get(CLAVE_ROL)
 
-    conexion = obtener_conexion()
+    if id_rol is None:
+        return None
 
-    try:
-        cursor = conexion.cursor()
-        cursor.execute(sql, parametros or ())
-        conexion.commit()
-        cursor.close()
+    # Se guarda en la sesion para no consultar la base en cada recarga
+    clave = f"_nombre_rol_{id_rol}"
 
-        return True
+    if clave not in st.session_state:
+        filas = consultar(
+            "SELECT Nombre FROM Rol WHERE Id_rol = %s",
+            (id_rol,)
+        )
+        st.session_state[clave] = (
+            filas[0][0].strip().lower() if filas else None
+        )
 
-    except Exception as e:
-        conexion.rollback()
-        st.error(f"Error al ejecutar la operación: {e}")
-        return False
-
-    finally:
-        conexion.close()
+    return st.session_state[clave]
 
 
-# ==========================================================
-# 3. OBTENER PRODUCTOS DEL CATÁLOGO COMÚN
-# ==========================================================
-
-def obtener_productos():
-
-    sql = """
-        SELECT
-            Id_producto,
-            Nombre
-        FROM PRODUCTOS
-        ORDER BY Nombre
+def obtener_permisos():
     """
+    Devuelve (id_sede, puede_registrar).
 
-    return consultar(sql)
+    - Administrador: sin acceso a las compras.
+    - Encargado del CD / de tienda: ve y registra las compras de SU sede.
+    - Vendedor del CD / de tienda: solo ve las compras de SU sede.
 
-
-# ==========================================================
-# 4. CONSULTAR INVENTARIO POR SEDE
-# ==========================================================
-
-def obtener_inventario(busqueda="", id_sede=None):
-
-    sql = """
-        SELECT
-            I.Id_inventario,
-            P.Id_producto,
-            P.Nombre AS Producto,
-            I.Existencia
-        FROM INVENTARIO I
-        INNER JOIN PRODUCTOS P
-            ON I.Id_producto = P.Id_producto
-        WHERE I.Id_sede = %s
+    Si el usuario no tiene acceso devuelve (None, False).
     """
+    id_sede = st.session_state.get(CLAVE_SEDE)
+    rol = obtener_nombre_rol()
 
-    parametros = [id_sede]
+    if rol is None or id_sede is None:
+        return None, False
 
-    if busqueda:
-        sql += " AND P.Nombre LIKE %s"
-        parametros.append(f"%{busqueda}%")
+    if rol in (ROL_ENCARGADO_CD, ROL_ENCARGADO_TIENDA):
+        return id_sede, True
 
-    sql += " ORDER BY P.Nombre"
+    if rol in (ROL_VENDEDOR_CD, ROL_VENDEDOR_TIENDA):
+        return id_sede, False
 
-    resultados = consultar(sql, parametros)
-
-    columnas = [
-        "ID inventario",
-        "ID producto",
-        "Producto",
-        "Existencia"
-    ]
-
-    return pd.DataFrame(resultados, columns=columnas)
+    # Administrador, rol desconocido o sin sede asignada: sin acceso
+    return None, False
 
 
-# ==========================================================
-# 5. REGISTRAR MOVIMIENTOS
-# ==========================================================
-
-def aplicar_movimiento(tipo, id_producto, id_sede, cantidad):
-
-    if tipo == "Ajuste":
-
-        if cantidad < 0:
-            st.error("La existencia no puede ser negativa.")
-            return False
-
-    else:
-
-        if cantidad <= 0:
-            st.error("La cantidad debe ser mayor que cero.")
-            return False
-
-    conexion = obtener_conexion()
+# ==============================
+# FUNCIONES DE BASE DE DATOS
+# ==============================
+def consultar(consulta, parametros=()):
+    conexion = None
     cursor = None
 
     try:
+        conexion = obtener_conexion()
+
+        if conexion is None:
+            return []
+
+        cursor = conexion.cursor()
+        cursor.execute(consulta, parametros)
+
+        return cursor.fetchall()
+
+    except Exception as error:
+        st.error(
+            f"Error al consultar los datos: {error}"
+        )
+        return []
+
+    finally:
+        if cursor is not None:
+            cursor.close()
+
+        if (
+            conexion is not None
+            and conexion.is_connected()
+        ):
+            conexion.close()
+
+
+def obtener_proveedores(id_sede):
+    """Solo los proveedores registrados por la sede indicada."""
+    return consultar(
+        """
+        SELECT Id_proveedor, Nombre
+        FROM PROVEEDORES
+        WHERE Id_sede = %s
+        ORDER BY Nombre
+        """,
+        (id_sede,)
+    )
+
+
+def obtener_sedes(id_sede):
+    """Solo la sede indicada (la del usuario)."""
+    return consultar(
+        "SELECT id_sede, nombre FROM Sede WHERE id_sede = %s",
+        (id_sede,)
+    )
+
+
+def obtener_productos():
+    return consultar(
+        """
+        SELECT p.Id_producto, p.Nombre, u.Abreviatura, p.Id_unidad 
+        FROM PRODUCTOS p
+        INNER JOIN UNIDAD_MEDIDA u
+            ON p.Id_unidad = u.Id_unidad
+        ORDER BY p.Nombre
+        """
+    )
+
+
+def obtener_id_usuario():
+    """Busca el Id del usuario que tiene la sesión iniciada."""
+    filas = consultar(
+        "SELECT Id_usuario FROM USUARIO WHERE Correo = %s LIMIT 1",
+        (st.session_state.get("usuario", ""),)
+    )
+
+    if filas:
+        return filas[0][0]
+
+    return None
+
+
+def obtener_compras(busqueda="", id_proveedor=None, id_sede=None):
+    consulta = """
+    SELECT
+        c.Id_compra,
+        c.Fecha,
+        pr.Nombre,
+        s.nombre,
+        CONCAT(u.Nombre, ' ', u.Apellido),
+        c.Metodo_pago,
+        COALESCE(SUM(d.Cantidad * d.precio_compra), 0)
+    FROM COMPRAS c
+    INNER JOIN PROVEEDORES pr
+        ON c.Id_proveedor = pr.Id_proveedor
+    INNER JOIN Sede s
+        ON c.Id_sede = s.id_sede
+    INNER JOIN USUARIO u
+        ON c.Id_usuario = u.Id_usuario
+    LEFT JOIN DETALLE_COMPRA d
+        ON d.Id_compra = c.Id_compra
+    WHERE
+        (%s = '' OR CAST(c.Id_compra AS CHAR) LIKE %s
+         OR pr.Nombre LIKE %s)
+        AND (%s IS NULL OR c.Id_proveedor = %s)
+        AND (%s IS NULL OR c.Id_sede = %s)
+    GROUP BY
+        c.Id_compra, c.Fecha, pr.Nombre, s.nombre,
+        u.Nombre, u.Apellido, c.Metodo_pago
+    ORDER BY c.Fecha DESC, c.Id_compra DESC
+    """
+
+    termino = f"%{busqueda.strip()}%"
+
+    return consultar(
+        consulta,
+        (
+            busqueda.strip(),
+            termino,
+            termino,
+            id_proveedor,
+            id_proveedor,
+            id_sede,
+            id_sede
+        )
+    )
+
+
+def obtener_detalle(id_compra, id_sede):
+    """El detalle de una compra, solo si pertenece a la sede indicada."""
+    return consultar(
+        """
+        SELECT
+            p.Nombre,
+            d.Cantidad,
+            u.Abreviatura,
+            d.precio_compra,
+            d.Cantidad * d.precio_compra
+        FROM DETALLE_COMPRA d
+        INNER JOIN COMPRAS c
+            ON d.Id_compra = c.Id_compra
+        INNER JOIN PRODUCTOS p
+            ON d.Id_producto = p.Id_producto
+        INNER JOIN UNIDAD_MEDIDA u
+            ON p.Id_unidad = u.Id_unidad
+        WHERE d.Id_compra = %s
+          AND c.Id_sede = %s
+        ORDER BY p.Nombre
+        """,
+        (id_compra, id_sede)
+    )
+
+
+def registrar_compra(
+    id_proveedor,
+    id_usuario,
+    id_sede,
+    fecha,
+    metodo_pago,
+    lineas
+):
+    """
+    Guarda la compra, su detalle y suma los productos al inventario,
+    todo en una sola transacción. Devuelve el Id de la compra,
+    o None si hubo un error (en ese caso no se guarda nada).
+    """
+    conexion = None
+    cursor = None
+
+    try:
+        conexion = obtener_conexion()
+
+        if conexion is None:
+            return None
 
         cursor = conexion.cursor()
 
-        # Buscar el producto en el inventario de la sede
-        sql_buscar = """
-            SELECT Id_inventario, Existencia
-            FROM INVENTARIO
-            WHERE Id_producto = %s
-            AND Id_sede = %s
-            FOR UPDATE
-        """
-
+        # Seguridad: el proveedor debe pertenecer a la sede de la compra
         cursor.execute(
-            sql_buscar,
-            (id_producto, id_sede)
+            """
+            SELECT 1
+            FROM PROVEEDORES
+            WHERE Id_proveedor = %s AND Id_sede = %s
+            LIMIT 1
+            """,
+            (id_proveedor, id_sede)
         )
 
-        resultado = cursor.fetchone()
-
-        # ------------------------------------------
-        # ENTRADA
-        # ------------------------------------------
-
-        if tipo == "Entrada":
-
-            if resultado:
-
-                sql = """
-                    UPDATE INVENTARIO
-                    SET Existencia = Existencia + %s
-                    WHERE Id_producto = %s
-                    AND Id_sede = %s
-                """
-
-                cursor.execute(
-                    sql,
-                    (cantidad, id_producto, id_sede)
-                )
-
-            else:
-
-                sql = """
-                    INSERT INTO INVENTARIO
-                    (Id_producto, Id_sede, Existencia)
-                    VALUES (%s, %s, %s)
-                """
-
-                cursor.execute(
-                    sql,
-                    (id_producto, id_sede, cantidad)
-                )
-
-        # ------------------------------------------
-        # SALIDA
-        # ------------------------------------------
-
-        elif tipo == "Salida":
-
-            if not resultado:
-                st.error(
-                    "El producto no tiene existencias en esta sede."
-                )
-                conexion.rollback()
-                return False
-
-            existencia_actual = resultado[1]
-
-            if existencia_actual < cantidad:
-                st.error(
-                    f"Existencia insuficiente. "
-                    f"Disponible: {existencia_actual}"
-                )
-                conexion.rollback()
-                return False
-
-            sql = """
-                UPDATE INVENTARIO
-                SET Existencia = Existencia - %s
-                WHERE Id_producto = %s
-                AND Id_sede = %s
-            """
-
-            cursor.execute(
-                sql,
-                (cantidad, id_producto, id_sede)
+        if cursor.fetchone() is None:
+            raise ValueError(
+                "El proveedor no pertenece a la sede de la compra."
             )
 
-        # ------------------------------------------
-        # AJUSTE
-        # ------------------------------------------
-
-        elif tipo == "Ajuste":
-
-            if resultado:
-
-                sql = """
-                    UPDATE INVENTARIO
-                    SET Existencia = %s
-                    WHERE Id_producto = %s
-                    AND Id_sede = %s
-                """
-
-                cursor.execute(
-                    sql,
-                    (cantidad, id_producto, id_sede)
-                )
-
-            else:
-
-                sql = """
-                    INSERT INTO INVENTARIO
-                    (Id_producto, Id_sede, Existencia)
-                    VALUES (%s, %s, %s)
-                """
-
-                cursor.execute(
-                    sql,
-                    (id_producto, id_sede, cantidad)
-                )
-
-        conexion.commit()
-        return True
-
-    except Exception as e:
-
-        conexion.rollback()
-        st.error(f"Error al registrar el movimiento: {e}")
-        return False
-
-    finally:
-
-        if cursor:
-            cursor.close()
-
-        conexion.close()
-
-
-# ==========================================================
-# 6. MOSTRAR MÓDULO DE INVENTARIO
-# ==========================================================
-
-def mostrar_inventario():
-
-    id_rol = st.session_state.get("id_rol")
-    id_sede_usuario = st.session_state.get("id_sede")
-
-    # ------------------------------------------
-    # VALIDAR ROL Y SEDE
-    # ------------------------------------------
-
-    try:
-        id_rol = int(id_rol)
-        id_sede_usuario = int(id_sede_usuario)
-
-    except (TypeError, ValueError):
-        st.error("No se pudo identificar el rol o la sede del usuario.")
-        return
-
-    if id_rol not in ROLES_PUEDEN_VER:
-        st.error("No tienes permisos para acceder al inventario.")
-        return
-
-    # ------------------------------------------
-    # ENCABEZADO
-    # ------------------------------------------
-
-    st.title("Control de inventario")
-
-    st.write(
-        "Consulta las existencias de los productos "
-        "correspondientes a tu sede."
-    )
-
-    # ------------------------------------------
-    # CONSULTAR EXISTENCIAS
-    # ------------------------------------------
-
-    st.subheader("Existencias disponibles")
-
-    busqueda = st.text_input(
-        "Buscar producto",
-        placeholder="Escribe el nombre del producto..."
-    )
-
-    df = obtener_inventario(
-        busqueda,
-        id_sede_usuario
-    )
-
-    if df.empty:
-
-        st.info(
-            "No hay productos registrados en el inventario de esta sede."
+        cursor.execute(
+            """
+            INSERT INTO COMPRAS
+            (Id_proveedor, Fecha, Id_usuario, Id_sede, Metodo_pago)
+            VALUES (%s, %s, %s, %s, %s)
+            """,
+            (id_proveedor, fecha, id_usuario, id_sede, metodo_pago)
         )
 
-    else:
+        id_compra = cursor.lastrowid
+
+        for linea in lineas:
+            cursor.execute(
+                """
+                INSERT INTO DETALLE_COMPRA
+                (Id_compra, Id_producto, Cantidad, precio_compra)
+                VALUES (%s, %s, %s, %s)
+                """,
+                (
+                    id_compra,
+                    linea["id_producto"],
+                    linea["cantidad"],
+                    linea["precio"]
+                )
+            )
+
+            # Entrada al inventario de la sede: suma la cantidad, o crea
+            # la fila si el producto aun no esta en el inventario de la sede
+            sumar_existencia(
+                cursor,
+                linea["id_producto"],
+                id_sede,
+                linea["cantidad"],
+                id_compra
+            )
+
+        conexion.commit()
+
+        return id_compra
+
+    except Exception as error:
+        if conexion is not None:
+            conexion.rollback()
+
+        st.error(
+            f"Error al registrar la compra: {error}"
+        )
+        return None
+
+    finally:
+        if cursor is not None:
+            cursor.close()
+
+        if (
+            conexion is not None
+            and conexion.is_connected()
+        ):
+            conexion.close()
+
+
+# ==============================
+# PANTALLA DEL MÓDULO
+# ==============================
+def mostrar_compra():
+    st.header("Gestión de compras")
+
+    # ---- Permisos del usuario actual ----
+    sede_usuario, puede_registrar = obtener_permisos()
+
+    if sede_usuario is None:
+        st.error(
+            "No tiene permisos para ver las compras."
+        )
+        return
+
+    # Mensaje que se guarda antes de recargar la página
+    mensaje = st.session_state.pop("mensaje_compra", None)
+    if mensaje:
+        st.success(mensaje)
+
+    if "lineas_compra" not in st.session_state:
+        st.session_state["lineas_compra"] = []
+
+    # Solo la sede del usuario y los proveedores de esa sede
+    sedes = obtener_sedes(sede_usuario)
+    proveedores = obtener_proveedores(sede_usuario)
+
+    if not sedes:
+        st.warning(
+            "No se encontró la sede del usuario."
+        )
+        return
+
+    # -----------------------------------
+    # LISTADO
+    # -----------------------------------
+    st.subheader("Historial de compras")
+
+    col1, col2, col3 = st.columns([2, 1, 1])
+
+    with col1:
+        busqueda = st.text_input(
+            "Buscar compra",
+            placeholder="ID de compra o nombre del proveedor"
+        )
+
+    with col2:
+        opciones_proveedor = {"Todos los proveedores": None}
+
+        for proveedor in proveedores:
+            opciones_proveedor[proveedor[1]] = proveedor[0]
+
+        proveedor_filtro = st.selectbox(
+            "Filtrar por proveedor",
+            list(opciones_proveedor.keys())
+        )
+
+    with col3:
+        # Filtro fijo: cada usuario solo ve las compras de su sede
+        st.text_input(
+            "Sede",
+            value=sedes[0][1],
+            disabled=True
+        )
+
+    compras = obtener_compras(
+        busqueda,
+        opciones_proveedor[proveedor_filtro],
+        sede_usuario
+    )
+
+    if compras:
+        tabla = pd.DataFrame(
+            [
+                (
+                    c[0],
+                    c[1],
+                    c[2],
+                    c[3],
+                    c[4],
+                    c[5],
+                    float(c[6])
+                )
+                for c in compras
+            ],
+            columns=[
+                "ID",
+                "Fecha",
+                "Proveedor",
+                "Sede",
+                "Registrada por",
+                "Método de pago",
+                "Total ($)"
+            ]
+        )
 
         st.dataframe(
-            df,
+            tabla,
             use_container_width=True,
             hide_index=True
         )
 
-    # ------------------------------------------
-    # PERMISOS PARA MOVIMIENTOS
-    # ------------------------------------------
-
-    if id_rol not in ROLES_PUEDEN_MOVER:
-
-        st.info(
-            "Tu rol permite consultar el inventario, "
-            "pero no registrar movimientos."
+        st.caption(
+            f"Compras encontradas: {len(compras)}"
         )
 
-        return
+        # ---- Detalle de una compra ----
+        compra = st.selectbox(
+            "Ver el detalle de una compra",
+            compras,
+            format_func=lambda c: f"{c[0]} - {c[2]} ({c[1]})",
+            key="compra_detalle"
+        )
 
-    # ------------------------------------------
-    # FORMULARIO DE MOVIMIENTOS
-    # ------------------------------------------
+        detalle = obtener_detalle(compra[0], sede_usuario)
+
+        if detalle:
+            tabla_detalle = pd.DataFrame(
+                [
+                    (
+                        d[0],
+                        float(d[1]),
+                        d[2],
+                        float(d[3]),
+                        float(d[4])
+                    )
+                    for d in detalle
+                ],
+                columns=[
+                    "Producto",
+                    "Cantidad",
+                    "Unidad",
+                    "Precio unitario ($)",
+                    "Subtotal ($)"
+                ]
+            )
+
+            st.dataframe(
+                tabla_detalle,
+                use_container_width=True,
+                hide_index=True
+            )
+
+            st.caption(
+                f"Total de la compra: ${float(compra[6]):,.2f}"
+            )
+        else:
+            st.info(
+                "Esta compra no tiene productos registrados."
+            )
+    else:
+        st.info(
+            "No se encontraron compras."
+        )
+
+    # Los vendedores solo consultan: aqui termina su pantalla
+    if not puede_registrar:
+        return
 
     st.divider()
 
-    st.subheader("Registrar movimiento")
+    # -----------------------------------
+    # REGISTRAR COMPRA
+    # -----------------------------------
+    st.subheader("Registrar nueva compra")
+
+    if not proveedores:
+        st.warning(
+            "Su sede no tiene proveedores registrados. "
+            "Primero debe registrar un proveedor."
+        )
+        return
 
     productos = obtener_productos()
 
     if not productos:
-        st.warning("No hay productos registrados en el catálogo.")
+        st.warning(
+            "Primero debe registrar productos."
+        )
         return
 
-    opciones_productos = {
-        f"{producto[1]} (ID: {producto[0]})": producto[0]
-        for producto in productos
-    }
+    col1, col2 = st.columns(2)
 
-    with st.form("form_movimiento_inventario"):
-
-        tipo = st.selectbox(
-            "Tipo de movimiento",
-            TIPOS_MOVIMIENTO
+    with col1:
+        proveedor = st.selectbox(
+            "Proveedor",
+            proveedores,
+            format_func=lambda p: p[1],
+            key="compra_proveedor"
         )
 
-        producto_seleccionado = st.selectbox(
+        fecha = st.date_input(
+            "Fecha de la compra",
+            value=date.today(),
+            key="compra_fecha"
+        )
+
+    with col2:
+        # La compra siempre se registra en la sede del usuario
+        st.text_input(
+            "Sede",
+            value=sedes[0][1],
+            disabled=True,
+            key="compra_sede"
+        )
+
+        metodo_pago = st.selectbox(
+            "Método de pago",
+            METODOS_PAGO,
+            key="compra_metodo"
+        )
+
+    st.markdown("**Productos de la compra**")
+
+    col1, col2, col3 = st.columns([3, 1, 1])
+
+    with col1:
+        producto = st.selectbox(
             "Producto",
-            list(opciones_productos.keys())
+            productos,
+            format_func=lambda p: f"{p[0]} - {p[1]} ({p[2]})",
+            key="compra_producto"
         )
 
-        if tipo == "Ajuste":
+    with col2:
+        cantidad = st.number_input(
+            "Cantidad",
+            min_value=0.0,
+            step=1.0,
+            format="%.2f",
+            key="compra_cantidad"
+        )
 
-            cantidad = st.number_input(
-                "Nueva existencia",
-                min_value=0,
-                step=1
+    with col3:
+        precio = st.number_input(
+            "Precio unitario ($)",
+            min_value=0.0,
+            step=0.05,
+            format="%.2f",
+            key="compra_precio"
+        )
+
+    if st.button("Agregar al detalle"):
+        ya_agregado = any(
+            linea["id_producto"] == producto[0]
+            for linea in st.session_state["lineas_compra"]
+        )
+
+        if cantidad <= 0 or precio <= 0:
+            st.warning(
+                "La cantidad y el precio deben ser mayores que cero."
             )
-
+        elif ya_agregado:
+            st.warning(
+                "Ese producto ya está en el detalle. "
+                "Quítelo y agréguelo de nuevo con la cantidad correcta."
+            )
         else:
-
-            cantidad = st.number_input(
-                "Cantidad",
-                min_value=1,
-                step=1
+            st.session_state["lineas_compra"].append(
+                {
+                    "id_producto": producto[0],
+                    "nombre": producto[1],
+                    "unidad": producto[2],
+                    "cantidad": cantidad,
+                    "precio": precio
+                }
             )
 
-        guardar = st.form_submit_button(
-            "Registrar movimiento",
-            use_container_width=True
+    lineas = st.session_state["lineas_compra"]
+
+    if lineas:
+        total = 0.0
+
+        for i, linea in enumerate(lineas):
+            subtotal = linea["cantidad"] * linea["precio"]
+            total += subtotal
+
+            c1, c2, c3, c4, c5 = st.columns([4, 2, 2, 2, 2])
+
+            c1.write(linea["nombre"])
+            c2.write(f'{linea["cantidad"]:,.2f} {linea["unidad"]}')
+            c3.write(f'${linea["precio"]:,.2f}')
+            c4.write(f"${subtotal:,.2f}")
+
+            if c5.button("Quitar", key=f"quitar_linea_{i}"):
+                lineas.pop(i)
+                st.rerun()
+
+        st.write(f"**Total de la compra: ${total:,.2f}**")
+    else:
+        st.info(
+            "Aún no hay productos en el detalle."
         )
 
-        if guardar:
-
-            id_producto = opciones_productos[
-                producto_seleccionado
-            ]
-
-            resultado = aplicar_movimiento(
-                tipo,
-                id_producto,
-                id_sede_usuario,
-                cantidad
+    if st.button("Registrar compra"):
+        if not lineas:
+            st.warning(
+                "Agregue al menos un producto a la compra."
             )
+        else:
+            id_usuario = obtener_id_usuario()
 
-            if resultado:
+            if id_usuario is None:
+                st.warning(
+                    "No se pudo identificar al usuario de la sesión."
+                )
+            else:
+                id_compra = registrar_compra(
+                    proveedor[0],
+                    id_usuario,
+                    sede_usuario,
+                    fecha,
+                    metodo_pago,
+                    lineas
+                )
 
-                st.success("Movimiento registrado correctamente.")
-                st.rerun()
+                if id_compra is not None:
+                    st.session_state["lineas_compra"] = []
+                    st.session_state["mensaje_compra"] = (
+                        f"Compra {id_compra} registrada correctamente "
+                        "y agregada al inventario."
+                    )
+                    st.rerun()
+
