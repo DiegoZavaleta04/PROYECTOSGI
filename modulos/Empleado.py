@@ -15,6 +15,21 @@ ROLES_ADMINISTRAR = (5,)
 
 OPCIONES_ESTADO = ["Todos", "Activos", "Inactivos"]
 
+# Roles que se pueden asignar según el tipo de sede (Sede.tipo).
+# Se comparan por NOMBRE (en minúsculas), tal como están en la tabla Rol.
+# !! REVISA que coincidan con tu tabla Rol (SELECT * FROM Rol;) !!
+ROLES_POR_TIPO = {
+    "CD": (
+        "encargado cd",
+        "vendedor cd",
+        "administrador",
+    ),
+    "TIENDA": (
+        "encargado tienda",
+        "vendedor tienda",
+    ),
+}
+
 
 # ==============================
 # FUNCIONES DE BASE DE DATOS
@@ -94,8 +109,9 @@ def obtener_roles():
 
 
 def obtener_sedes():
+    """Devuelve (id_sede, nombre, tipo) de cada sede."""
     return consultar(
-        "SELECT id_sede, nombre FROM Sede ORDER BY nombre"
+        "SELECT id_sede, nombre, tipo FROM Sede ORDER BY nombre"
     )
 
 
@@ -168,6 +184,32 @@ def valor_estado(activo):
     return ESTADO_INACTIVO
 
 
+# ==============================
+# ROLES SEGUN LA SEDE
+# ==============================
+def nombres_roles_permitidos(tipo_sede):
+    """Nombres de rol (minúsculas) que admite ese tipo de sede."""
+    return ROLES_POR_TIPO.get(str(tipo_sede).strip().upper(), ())
+
+
+def roles_de_sede(roles, tipo_sede):
+    """Solo los roles que corresponden al tipo de la sede."""
+    permitidos = nombres_roles_permitidos(tipo_sede)
+
+    return [
+        r for r in roles
+        if r[1].strip().lower() in permitidos
+    ]
+
+
+def rol_corresponde_a_sede(rol, sede):
+    """True si el rol (id, nombre) puede asignarse a la sede (id, nombre, tipo)."""
+    if rol is None or sede is None:
+        return False
+
+    return rol[1].strip().lower() in nombres_roles_permitidos(sede[2])
+
+
 def validar_datos(nombre, apellido, correo, contrasena, exigir_contrasena):
     """Devuelve un mensaje de error, o None si todo está bien."""
     if (
@@ -199,6 +241,10 @@ def validar_datos(nombre, apellido, correo, contrasena, exigir_contrasena):
         return "La contraseña debe tener al menos 6 caracteres."
 
     return None
+
+
+def etiqueta_sede(sede):
+    return f"{sede[1]} ({sede[2]})"
 
 
 # ==============================
@@ -362,6 +408,22 @@ def mostrar_empleado():
     # -----------------------------------
     st.subheader("Registrar nuevo empleado")
 
+    # La sede va FUERA del formulario: así, al cambiarla, la lista de
+    # roles se actualiza al instante (dentro de un formulario no se puede).
+    sede = st.selectbox(
+        "Sede",
+        sedes,
+        format_func=etiqueta_sede,
+        key="empleado_nueva_sede"
+    )
+
+    roles_sede = roles_de_sede(roles, sede[2])
+
+    st.caption(
+        "Roles disponibles en esta sede: "
+        + (", ".join(r[1] for r in roles_sede) or "ninguno")
+    )
+
     with st.form("form_empleado"):
         nombre = st.text_input(
             "Nombre",
@@ -385,14 +447,9 @@ def mostrar_empleado():
 
         rol = st.selectbox(
             "Rol",
-            roles,
-            format_func=lambda r: r[1]
-        )
-
-        sede = st.selectbox(
-            "Sede",
-            sedes,
-            format_func=lambda s: s[1]
+            roles_sede,
+            format_func=lambda r: r[1],
+            key=f"empleado_nuevo_rol_{sede[0]}"
         )
 
         activo = st.checkbox(
@@ -415,6 +472,11 @@ def mostrar_empleado():
 
         if error_validacion:
             st.warning(error_validacion)
+        elif not rol_corresponde_a_sede(rol, sede):
+            # Validación de seguridad: el rol debe ser de esa sede
+            st.warning(
+                "El rol seleccionado no corresponde al tipo de sede."
+            )
         elif correo_existe(correo):
             st.warning(
                 "Ya existe un empleado con ese correo."
@@ -466,15 +528,39 @@ def mostrar_empleado():
         key="empleado_editar"
     )
 
-    indice_rol = next(
-        (i for i, r in enumerate(roles) if r[0] == empleado[4]),
-        0
-    )
-
     indice_sede = next(
         (i for i, s in enumerate(sedes) if s[0] == empleado[7]),
         0
     )
+
+    # Igual que al registrar: la sede va fuera del formulario para que
+    # los roles disponibles cambien según la sede elegida.
+    nueva_sede = st.selectbox(
+        "Sede",
+        sedes,
+        index=indice_sede,
+        format_func=etiqueta_sede,
+        key=f"editar_sede_{empleado[0]}"
+    )
+
+    roles_edicion = roles_de_sede(roles, nueva_sede[2])
+
+    indice_rol = next(
+        (i for i, r in enumerate(roles_edicion) if r[0] == empleado[4]),
+        0
+    )
+
+    st.caption(
+        "Roles disponibles en esta sede: "
+        + (", ".join(r[1] for r in roles_edicion) or "ninguno")
+    )
+
+    # Aviso para empleados que ya estaban con un rol que no corresponde
+    if empleado[4] not in [r[0] for r in roles_edicion]:
+        st.warning(
+            f"El rol actual ({empleado[5]}) no corresponde a esta sede. "
+            "Seleccione el rol correcto antes de guardar."
+        )
 
     # La clave incluye el ID para que el formulario se actualice
     # al cambiar de empleado
@@ -504,16 +590,10 @@ def mostrar_empleado():
 
         nuevo_rol = st.selectbox(
             "Rol",
-            roles,
-            index=indice_rol,
-            format_func=lambda r: r[1]
-        )
-
-        nueva_sede = st.selectbox(
-            "Sede",
-            sedes,
-            index=indice_sede,
-            format_func=lambda s: s[1]
+            roles_edicion,
+            index=indice_rol if roles_edicion else None,
+            format_func=lambda r: r[1],
+            key=f"editar_rol_{empleado[0]}_{nueva_sede[0]}"
         )
 
         nuevo_activo = st.checkbox(
@@ -541,6 +621,11 @@ def mostrar_empleado():
 
         if error_validacion:
             st.warning(error_validacion)
+        elif not rol_corresponde_a_sede(nuevo_rol, nueva_sede):
+            # Validación de seguridad: el rol debe ser de esa sede
+            st.warning(
+                "El rol seleccionado no corresponde al tipo de sede."
+            )
         elif correo_existe(nuevo_correo, empleado[0]):
             st.warning(
                 "Ya existe otro empleado con ese correo."
