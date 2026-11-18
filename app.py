@@ -157,6 +157,7 @@ MODULOS = {
     "Inventario": cargar_modulo("Inventario", "mostrar_inventario"),
     "Compras": cargar_modulo("Compras", "mostrar_compra"),
     "sedes": cargar_modulo ("sedes", "mostrar_sedes"),
+    "Informes": cargar_modulo("Informes", "mostrar_informes"),
     # "Clientes": cargar_modulo("Clientes", "mostrar_cliente"),
     "Información": mostrar_informacion,
 }
@@ -175,9 +176,14 @@ MODULOS = {
 # ==============================================================
 PERMISOS_MODULOS = {
     "Ventas": (1, 2, 3, 4),
+    "Productos": (2, 3, 4),
+    "Proveedores": (1, 2, 3, 4),
     "Empleados": (1, 2, 5),
     "Inventario": (1, 2, 3, 4),
-    "Productos": (1, 2, 3, 4),
+    "Compras": (1, 2, 3, 4),
+    "Sedes": (1, 2, 3, 4, 5),
+    "Informes": (5,),
+    "Información": (1, 2, 3, 4),
 }
 
 
