@@ -5,6 +5,24 @@ import streamlit as st
 
 NOMBRE_LOGO = "Logo prueba.jpeg"
 
+from config.panel import (
+    aplicar_estilo, mostrar_panel, boton_volver,
+    pagina_actual, modulo_permitido,
+)
+
+aplicar_estilo()
+pagina = pagina_actual()
+
+if pagina == "inicio":
+    if mostrar_panel() == "cerrar":
+        st.session_state.clear()
+        st.rerun()
+else:
+    if not modulo_permitido(pagina):
+        st.error("No tiene permisos para este módulo.")
+    else:
+        boton_volver()
+        ...   # aquí el código que ya tienen para abrir el módulo "pagina"
 
 # ==============================
 # CONEXIÓN Y LOGIN
