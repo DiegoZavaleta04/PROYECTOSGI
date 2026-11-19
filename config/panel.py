@@ -105,8 +105,8 @@ def aplicar_estilo():
             margin: 1.2rem 0 0.6rem 0;
         }}
         .panel-icono img {{
-            width: 150px;
-            height: 150px;
+            width: 180px;
+            height: 180px;
             object-fit: contain;
         }}
         div.stButton > button,
