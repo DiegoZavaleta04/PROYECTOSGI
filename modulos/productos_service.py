@@ -1,10 +1,31 @@
-
 import mysql.connector
 from config.conexion import obtener_conexion
 
 
 class ErrorProducto(Exception):
     pass
+
+
+# Reglas de venta: lo mas pequeno que se puede vender de un producto.
+#   1    -> solo cantidades enteras (1, 2, 3...)
+#   0.5  -> medias (0.5, 1, 1.5...)
+#   0.25 -> hasta cuartos (0.25, 0.5, 0.75, 1...)
+INCREMENTOS_VENTA = (1.0, 0.5, 0.25)
+
+
+def validar_incremento(incremento):
+    """Devuelve el incremento como float, o lanza ErrorProducto."""
+    try:
+        valor = float(incremento)
+    except (TypeError, ValueError):
+        raise ErrorProducto("La regla de venta no es válida.")
+
+    if valor not in INCREMENTOS_VENTA:
+        raise ErrorProducto(
+            "La regla de venta debe ser 1, 0.5 o 0.25."
+        )
+
+    return valor
 
 
 def consultar(sql, parametros=()):
@@ -65,7 +86,8 @@ def listar_productos(busqueda="", id_categoria=None):
             p.Id_categoria,
             c.nombre AS Categoria,
             u.Nombre AS Unidad,
-            u.Abreviatura
+            u.Abreviatura,
+            p.Incremento_venta
         FROM PRODUCTOS p
         INNER JOIN Categoria c
             ON p.Id_categoria = c.id_categoria
@@ -119,7 +141,15 @@ def listar_unidades():
 
 
 # REGISTRAR PRODUCTO
-def crear_producto(nombre, descripcion, id_unidad, id_categoria):
+def crear_producto(
+    nombre,
+    descripcion,
+    id_unidad,
+    id_categoria,
+    incremento_venta=1
+):
+
+    incremento_venta = validar_incremento(incremento_venta)
 
     nombre = " ".join((nombre or "").split())
     descripcion = (descripcion or "").strip() or None
@@ -138,13 +168,13 @@ def crear_producto(nombre, descripcion, id_unidad, id_categoria):
 
     sql = """
         INSERT INTO PRODUCTOS
-        (Nombre, Descripcion, Id_unidad, Id_categoria)
-        VALUES (%s, %s, %s, %s)
+        (Nombre, Descripcion, Id_unidad, Id_categoria, Incremento_venta)
+        VALUES (%s, %s, %s, %s, %s)
     """
 
     return ejecutar(
         sql,
-        (nombre, descripcion, id_unidad, id_categoria)
+        (nombre, descripcion, id_unidad, id_categoria, incremento_venta)
     )
 
 
@@ -154,8 +184,15 @@ def actualizar_producto(
     nombre,
     descripcion,
     id_unidad,
-    id_categoria
+    id_categoria,
+    incremento_venta=None
 ):
+    """
+    Si incremento_venta es None, la regla de venta actual no se modifica.
+    """
+
+    if incremento_venta is not None:
+        incremento_venta = validar_incremento(incremento_venta)
 
     nombre = " ".join((nombre or "").split())
     descripcion = (descripcion or "").strip() or None
@@ -177,7 +214,8 @@ def actualizar_producto(
         SET Nombre = %s,
             Descripcion = %s,
             Id_unidad = %s,
-            Id_categoria = %s
+            Id_categoria = %s,
+            Incremento_venta = COALESCE(%s, Incremento_venta)
         WHERE Id_producto = %s
     """
 
@@ -188,6 +226,7 @@ def actualizar_producto(
             descripcion,
             id_unidad,
             id_categoria,
+            incremento_venta,
             id_producto
         )
     )
