@@ -3,48 +3,21 @@ Panel de control con tarjetas (icono grande + boton) en lugar de la barra
 lateral, con fondo rosado y el logo de la cooperativa.
 Guardar este archivo como config/panel.py
 
-CARPETAS (la carpeta assets va junto a app.py):
+Este archivo SOLO dibuja el panel. Los modulos y los permisos por rol
+siguen en app.py (MODULOS y PERMISOS_MODULOS): app.py le pasa a
+mostrar_panel() la lista de modulos que el usuario puede ver.
 
-    proyecto/
-    |-- app.py
-    |-- assets/
-    |   |-- logo.png              <-- el logo de la cooperativa
-    |   `-- iconos/
-    |       |-- inventario.svg    (compras.svg, ventas.svg, ...)
-    |-- config/
-    |   |-- conexion.py
-    |   `-- panel.py
-    `-- modulos/
-
-USO EN app.py (despues de iniciar sesion):
-
-    from config.panel import (
-        aplicar_estilo, mostrar_panel, boton_volver,
-        pagina_actual, modulo_permitido, obtener_nombre_rol,
-    )
-
-    aplicar_estilo()
-    pagina = pagina_actual()
-
-    if pagina == "inicio":
-        if mostrar_panel() == "cerrar":
-            st.session_state.clear()
-            st.rerun()
-    else:
-        if not modulo_permitido(pagina):
-            st.error("No tiene permisos para este módulo.")
-        else:
-            boton_volver()
-            ...   # aqui va el codigo que ya tienen para abrir el modulo
-                  # "pagina" ("compras", "inventario", ...)
+ICONOS: se buscan en assets/iconos/<nombre>.png, .jpg o .svg. Si ponen su
+propio dibujo en PNG con el mismo nombre, ese tiene prioridad sobre el SVG.
+La carpeta assets va junto a app.py.
 """
 
 import base64
+import html
+import os
 from pathlib import Path
 
 import streamlit as st
-
-from config.conexion import obtener_conexion
 
 
 # ==============================
@@ -69,85 +42,10 @@ CLAVE_PAGINA = "pagina"           # clave en st.session_state
 
 
 # ==============================
-# MODULOS DEL PANEL
-# ==============================
-# clave: (texto del boton, nombre del icono, roles que lo pueden ver)
-# La clave es la que usa app.py para saber que modulo abrir.
-# Los roles son los nombres de la tabla Rol, en minusculas.
-# !! AJUSTA esta lista a los modulos que tengan !!
-TODOS_MENOS_ADMIN = {
-    "encargado cd",
-    "encargado tienda",
-    "vendedor cd",
-    "vendedor tienda",
-}
-
-MODULOS = {
-    "sedes":       ("Gestión de sedes",    "sedes",       {"administrador"}),
-    "usuarios":    ("Gestión de usuarios", "usuarios",    {"administrador"}),
-    "productos":   ("Productos",           "productos",   {"encargado tienda"}),
-    "proveedores": ("Proveedores",         "proveedores", TODOS_MENOS_ADMIN),
-    "compras":     ("Compras",             "compras",     TODOS_MENOS_ADMIN),
-    "ventas":      ("Ventas",              "ventas",      TODOS_MENOS_ADMIN),
-    "inventario":  ("Inventario",          "inventario",  TODOS_MENOS_ADMIN),
-}
-
-
-# ==============================
-# ROL DEL USUARIO
-# ==============================
-def obtener_nombre_rol():
-    """Devuelve el nombre del rol del usuario (en minusculas), o None."""
-    id_rol = st.session_state.get("id_rol")
-
-    if id_rol is None:
-        return None
-
-    # Misma clave que usan los demas modulos: se consulta una sola vez
-    clave = f"_nombre_rol_{id_rol}"
-
-    if clave not in st.session_state:
-        nombre = None
-        conexion = obtener_conexion()
-
-        if conexion is not None:
-            try:
-                cursor = conexion.cursor()
-                cursor.execute(
-                    "SELECT Nombre FROM Rol WHERE Id_rol = %s",
-                    (id_rol,)
-                )
-                fila = cursor.fetchone()
-                cursor.close()
-
-                if fila:
-                    nombre = fila[0].strip().lower()
-
-            except Exception:
-                nombre = None
-
-            finally:
-                conexion.close()
-
-        st.session_state[clave] = nombre
-
-    return st.session_state[clave]
-
-
-def modulo_permitido(clave, rol=None):
-    """True si el rol del usuario puede entrar al modulo indicado."""
-    rol = rol or obtener_nombre_rol()
-
-    if clave not in MODULOS or rol is None:
-        return False
-
-    return rol in MODULOS[clave][2]
-
-
-# ==============================
 # NAVEGACION
 # ==============================
 def pagina_actual():
+    """Devuelve 'inicio' o el nombre del modulo abierto."""
     return st.session_state.get(CLAVE_PAGINA, "inicio")
 
 
@@ -196,6 +94,12 @@ def aplicar_estilo():
             font-weight: 600;
             margin: 0.2rem 0 0 0;
         }}
+        .panel-usuario {{
+            text-align: center;
+            color: {COLOR_TITULO};
+            font-size: 0.9rem;
+            margin: 0.3rem 0 0 0;
+        }}
         .panel-icono {{
             text-align: center;
             margin: 1.2rem 0 0.6rem 0;
@@ -242,10 +146,7 @@ def aplicar_estilo():
 # PANEL
 # ==============================
 def _html_icono(nombre):
-    """
-    Busca assets/iconos/<nombre>.png, .jpg o .svg. Si ponen su propio
-    dibujo en PNG con el mismo nombre, ese tiene prioridad sobre el SVG.
-    """
+    """Devuelve el HTML del icono, o un marcador si no se encuentra."""
     tipos = (
         (".png", "image/png"),
         (".jpg", "image/jpeg"),
@@ -253,76 +154,85 @@ def _html_icono(nombre):
         (".svg", "image/svg+xml"),
     )
 
-    for extension, tipo in tipos:
-        ruta = CARPETA_ICONOS / f"{nombre}{extension}"
+    if nombre:
+        for extension, tipo in tipos:
+            ruta = CARPETA_ICONOS / f"{nombre}{extension}"
 
-        if ruta.exists():
-            datos = base64.b64encode(ruta.read_bytes()).decode()
+            if ruta.exists():
+                datos = base64.b64encode(ruta.read_bytes()).decode()
 
-            return (
-                '<div class="panel-icono">'
-                f'<img src="data:{tipo};base64,{datos}" alt="{nombre}">'
-                "</div>"
-            )
+                return (
+                    '<div class="panel-icono">'
+                    f'<img src="data:{tipo};base64,{datos}" alt="{nombre}">'
+                    "</div>"
+                )
 
     # Si falta el dibujo, se muestra un marcador
     return '<div class="panel-icono" style="font-size:90px">📦</div>'
 
 
-def mostrar_encabezado():
+def mostrar_encabezado(ruta_logo=None, usuario=""):
     col_logo, col_titulo, _ = st.columns([1, 4, 1])
 
     with col_logo:
-        for nombre in NOMBRES_LOGO:
-            ruta = CARPETA_ASSETS / nombre
+        # Primero el logo que indique app.py; si no, assets/logo.*
+        if ruta_logo and os.path.exists(ruta_logo):
+            st.image(ruta_logo, width=120)
+        else:
+            for nombre in NOMBRES_LOGO:
+                ruta = CARPETA_ASSETS / nombre
 
-            if ruta.exists():
-                st.image(str(ruta), width=120)
-                break
+                if ruta.exists():
+                    st.image(str(ruta), width=120)
+                    break
 
     with col_titulo:
+        texto_usuario = (
+            f'<p class="panel-usuario">Usuario: {html.escape(usuario)}</p>'
+            if usuario else ""
+        )
+
         st.markdown(
             f'<p class="panel-titulo">{NOMBRE_SISTEMA}</p>'
-            f'<p class="panel-subtitulo">{NOMBRE_COOPERATIVA}</p>',
+            f'<p class="panel-subtitulo">{NOMBRE_COOPERATIVA}</p>'
+            f"{texto_usuario}",
             unsafe_allow_html=True
         )
 
 
-def mostrar_panel(rol=None):
+def mostrar_panel(opciones, iconos, ruta_logo=None, usuario=""):
     """
-    Dibuja el panel con las tarjetas que le corresponden al rol.
+    Dibuja el panel con una tarjeta por cada modulo de 'opciones'.
 
-    - Al pulsar una tarjeta guarda la pagina en st.session_state y recarga.
+    - opciones: nombres de los modulos que el usuario puede ver (los
+      mismos nombres de MODULOS en app.py).
+    - iconos: diccionario {nombre del modulo: nombre del icono}.
+    - Al pulsar una tarjeta guarda el modulo en st.session_state y recarga.
     - Devuelve "cerrar" si pulsan "Cerrar sistema"; si no, devuelve None.
     """
-    rol = rol or obtener_nombre_rol()
-
-    mostrar_encabezado()
+    mostrar_encabezado(ruta_logo, usuario)
     st.write("")
 
-    visibles = [
-        (clave, datos)
-        for clave, datos in MODULOS.items()
-        if rol in datos[2]
-    ]
-
-    if not visibles:
+    if not opciones:
         st.warning("Su rol no tiene módulos disponibles.")
 
-    for inicio in range(0, len(visibles), COLUMNAS):
-        fila = visibles[inicio:inicio + COLUMNAS]
+    for inicio in range(0, len(opciones), COLUMNAS):
+        fila = opciones[inicio:inicio + COLUMNAS]
         columnas = st.columns(COLUMNAS)
 
-        for columna, (clave, (texto, icono, _roles)) in zip(columnas, fila):
+        for columna, nombre in zip(columnas, fila):
             with columna:
-                st.markdown(_html_icono(icono), unsafe_allow_html=True)
+                st.markdown(
+                    _html_icono(iconos.get(nombre)),
+                    unsafe_allow_html=True
+                )
 
                 if st.button(
-                    texto,
-                    key=f"panel_{clave}",
+                    nombre,
+                    key=f"panel_{nombre}",
                     use_container_width=True
                 ):
-                    st.session_state[CLAVE_PAGINA] = clave
+                    st.session_state[CLAVE_PAGINA] = nombre
                     st.rerun()
 
         st.write("")
