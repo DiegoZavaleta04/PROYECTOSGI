@@ -169,7 +169,7 @@ def mostrar_informacion():
 # ==============================================================
 MODULOS = {
     "Ventas": cargar_modulo("ventas", "mostrar_venta"),
-    "Productos": cargar_modulo("Producto", "mostrar_producto"),
+    "Productos": cargar_modulo("Producto", "render"),
     "Proveedores": cargar_modulo("Proveedor", "mostrar_proveedor"),
     "Empleados": cargar_modulo("Empleado", "mostrar_empleado"),
     "Inventario": cargar_modulo("Inventario", "mostrar_inventario"),
