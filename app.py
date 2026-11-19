@@ -150,8 +150,8 @@ def mostrar_informacion():
 #   "Clientes": cargar_modulo("Clientes", "mostrar_cliente"),
 # ==============================================================
 MODULOS = {
-    "ventas": cargar_modulo("ventas", "mostrar_venta"),
-    "Productos": cargar_modulo("Producto", "render"),
+    "Ventas": cargar_modulo("ventas", "mostrar_venta"),
+    "Productos": cargar_modulo("Producto", "mostrar_producto"),
     "Proveedores": cargar_modulo("Proveedor", "mostrar_proveedor"),
     "Empleados": cargar_modulo("Empleado", "mostrar_empleado"),
     "Inventario": cargar_modulo("Inventario", "mostrar_inventario"),
