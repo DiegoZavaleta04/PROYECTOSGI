@@ -128,7 +128,29 @@ else:
     else:
         boton_volver()
         ...   # aquí el código que ya tienen para abrir el módulo "pagina"
+def cargar_modulo(nombre_archivo, nombre_funcion):
+    """
+    Importa modulos/<nombre_archivo>.py y devuelve la función indicada.
+    Si el archivo o la función no existen (o tienen un error), devuelve
+    una función que muestra un aviso en pantalla, así la app NO se cae.
+    """
+    try:
+        modulo = importlib.import_module(f"modulos.{nombre_archivo}")
+        return getattr(modulo, nombre_funcion)
+    except Exception as error:
+        mensaje = (
+            f"No se pudo cargar modulos/{nombre_archivo}.py "
+            f"(función {nombre_funcion}): {error}"
+        )
 
+        def aviso():
+            st.warning(mensaje)
+
+        return aviso
+
+
+def mostrar_informacion():
+    st.header("Información del sistema")
 # ==============================================================
 # >>>>>>>>>>  AQUÍ SE AGREGAN LOS NUEVOS MÓDULOS  <<<<<<<<<<
 #
