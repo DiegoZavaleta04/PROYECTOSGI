@@ -98,7 +98,8 @@ def obtener_productos(id_sede):
             p.Nombre,
             u.Abreviatura,
             p.Id_unidad,
-            i.Existencia
+            i.Existencia,
+            p.Incremento_venta
         FROM {T_INVENTARIO} i
         INNER JOIN {T_PRODUCTOS} p
             ON i.Id_producto = p.Id_producto
@@ -170,6 +171,28 @@ def registrar_venta(
             return None
 
         cursor = conexion.cursor()
+
+        # ---- Regla de venta: se revisa en la base, no solo en pantalla ----
+        for linea in lineas:
+            cursor.execute(
+                f"""
+                SELECT Incremento_venta
+                FROM {T_PRODUCTOS}
+                WHERE Id_producto = %s
+                """,
+                (linea["id_producto"],)
+            )
+
+            fila_regla = cursor.fetchone()
+            incremento = a_incremento(
+                fila_regla[0] if fila_regla else None
+            )
+
+            if not cantidad_valida(linea["cantidad"], incremento):
+                raise ValueError(
+                    f"{linea['producto']} solo se vende "
+                    f"{texto_incremento(incremento, linea['abreviatura'])}."
+                )
 
         # ---- Cliente: reutilizar si ya existe, o crearlo ----
         fila = None
@@ -335,6 +358,49 @@ def documento_valido(valor, maximo):
 
 
 # ==============================
+# REGLA DE VENTA DEL PRODUCTO
+# ==============================
+# PRODUCTOS.Incremento_venta es lo mas pequeno que se puede vender:
+# 1 = solo enteros, 0.5 = medias, 0.25 = cuartos.
+INCREMENTO_POR_DEFECTO = 1.0
+
+
+def a_incremento(valor):
+    """Convierte el valor de la base a float (1.0 si falta o no es valido)."""
+    try:
+        incremento = float(valor)
+    except (TypeError, ValueError):
+        return INCREMENTO_POR_DEFECTO
+
+    return incremento if incremento > 0 else INCREMENTO_POR_DEFECTO
+
+
+def cantidad_valida(cantidad, incremento):
+    """True si la cantidad es multiplo exacto del incremento."""
+    veces = cantidad / incremento
+
+    return abs(veces - round(veces)) < 1e-6
+
+
+def decimales_incremento(incremento):
+    """Decimales que debe mostrar el campo de cantidad."""
+    if incremento >= 1:
+        return 0
+
+    if incremento >= 0.5:
+        return 1
+
+    return 2
+
+
+def texto_incremento(incremento, abreviatura):
+    if incremento >= 1:
+        return "solo en cantidades enteras"
+
+    return f"de {incremento:g} en {incremento:g} {abreviatura}"
+
+
+# ==============================
 # VENTAS RECIENTES DE LA SEDE
 # ==============================
 def mostrar_ventas_recientes(id_sede):
@@ -432,6 +498,7 @@ def mostrar_venta():
         return
 
     existencias = {p[0]: float(p[4]) for p in productos}
+    incrementos = {p[0]: a_incremento(p[5]) for p in productos}
 
     # -----------------------------------
     # DATOS DEL CLIENTE
@@ -518,13 +585,22 @@ def mostrar_venta():
             )
         )
 
+    # Regla de venta del producto elegido
+    incremento = incrementos[producto[0]]
+
     with colc:
         cantidad = st.number_input(
-            "Cantidad",
+            f"Cantidad ({producto[2]})",
             min_value=0.0,
-            step=1.0,
-            format="%.2f"
+            step=incremento,
+            format=f"%.{decimales_incremento(incremento)}f",
+            key=f"venta_cantidad_{producto[0]}"
         )
+
+    st.caption(
+        f"{producto[1]} se vende "
+        f"{texto_incremento(incremento, producto[2])}."
+    )
 
     with colpr:
         precio = st.number_input(
@@ -550,6 +626,11 @@ def mostrar_venta():
 
         if cantidad <= 0:
             st.warning("La cantidad debe ser mayor que 0.")
+        elif not cantidad_valida(cantidad, incremento):
+            st.warning(
+                f"{producto[1]} solo se vende "
+                f"{texto_incremento(incremento, producto[2])}."
+            )
         elif precio <= 0:
             st.warning("El precio debe ser mayor que 0.")
         elif cantidad > disponible:
