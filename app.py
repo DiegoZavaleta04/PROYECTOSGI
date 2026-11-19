@@ -3,6 +3,14 @@ import importlib
 import mysql.connector
 import streamlit as st
 
+from config.panel import (
+    aplicar_estilo,
+    mostrar_panel,
+    boton_volver,
+    pagina_actual,
+    ir_al_panel,
+)
+
 NOMBRE_LOGO = "Logo prueba.jpeg"
 
 
@@ -107,6 +115,15 @@ def login():
                 )
 
 
+def cerrar_sesion():
+    st.session_state["sesion_iniciada"] = False
+    st.session_state["usuario"] = ""
+    st.session_state["id_rol"] = None
+    st.session_state["id_sede"] = None
+    ir_al_panel()
+    st.rerun()
+
+
 # ==============================
 # CARGA SEGURA DE MÓDULOS
 # ==============================
@@ -134,11 +151,12 @@ def cargar_modulo(nombre_archivo, nombre_funcion):
 def mostrar_informacion():
     st.header("Información del sistema")
 
+
 # ==============================================================
 # >>>>>>>>>>  AQUÍ SE AGREGAN LOS NUEVOS MÓDULOS  <<<<<<<<<<
 #
 # Formato:
-#   "Nombre que se ve en el menú": cargar_modulo("archivo", "funcion")
+#   "Nombre que se ve en la tarjeta": cargar_modulo("archivo", "funcion")
 #
 # "archivo" es el nombre del .py dentro de modulos/ (sin el .py),
 # escrito igual que en GitHub (mayúsculas incluidas).
@@ -147,6 +165,7 @@ def mostrar_informacion():
 # Ejemplo: si creas modulos/Clientes.py con la función
 # mostrar_cliente(), agrega esta línea:
 #   "Clientes": cargar_modulo("Clientes", "mostrar_cliente"),
+# y su icono en ICONOS_MODULOS (más abajo).
 # ==============================================================
 MODULOS = {
     "Ventas": cargar_modulo("ventas", "mostrar_venta"),
@@ -163,9 +182,30 @@ MODULOS = {
 
 
 # ==============================================================
+# ICONOS DEL PANEL
+#
+# "Nombre del módulo": "nombre del archivo del icono" (sin extensión)
+# Los dibujos están en assets/iconos/ (por ejemplo, ventas.svg).
+# Si ponen su propio dibujo en PNG con el mismo nombre
+# (ventas.png), ese tiene prioridad sobre el SVG.
+# ==============================================================
+ICONOS_MODULOS = {
+    "Ventas": "ventas",
+    "Productos": "productos",
+    "Proveedores": "proveedores",
+    "Empleados": "usuarios",
+    "Inventario": "inventario",
+    "Compras": "compras",
+    "Sedes": "sedes",
+    "Informes": "informes",
+    "Información": "informacion",
+}
+
+
+# ==============================================================
 # PERMISOS POR MÓDULO
 #
-# Aquí se indica qué roles pueden ver cada módulo en el menú.
+# Aquí se indica qué roles pueden ver cada módulo en el panel.
 # Roles: 1 Encargado CD, 2 Encargado tienda, 3 Vendedor CD,
 #        4 Vendedor tienda, 5 Administrador
 #
@@ -212,38 +252,38 @@ if "id_rol" not in st.session_state:
 if "id_sede" not in st.session_state:
     st.session_state["id_sede"] = None
 
+# Fondo rosado, botones y barra lateral oculta
+aplicar_estilo()
+
 # Comprobar si el usuario inició sesión
 if st.session_state["sesion_iniciada"]:
 
-    # Logo en el menú lateral
-    ruta_logo = obtener_ruta_logo()
-    if os.path.exists(ruta_logo):
-        st.sidebar.image(ruta_logo, use_container_width=True)
-
-    st.sidebar.title("Menú")
-
-    st.sidebar.write(
-        f"Usuario: {st.session_state['usuario']}"
-    )
-
-    # El menú solo incluye los módulos que el rol puede ver
+    # Solo los módulos que el rol puede ver
     opciones = modulos_permitidos(st.session_state["id_rol"])
 
-    seleccion = st.sidebar.selectbox(
-        "Seleccione una opción",
-        opciones
-    )
+    pagina = pagina_actual()
 
-    # Mostrar el módulo elegido
-    MODULOS[seleccion]()
+    # Si la página no existe o el rol no tiene permiso, vuelve al panel
+    if pagina != "inicio" and pagina not in opciones:
+        ir_al_panel()
+        pagina = "inicio"
 
-    # Cerrar sesión
-    if st.sidebar.button("Cerrar sesión"):
-        st.session_state["sesion_iniciada"] = False
-        st.session_state["usuario"] = ""
-        st.session_state["id_rol"] = None
-        st.session_state["id_sede"] = None
-        st.rerun()
+    if pagina == "inicio":
+        # Panel de control con tarjetas
+        accion = mostrar_panel(
+            opciones,
+            ICONOS_MODULOS,
+            ruta_logo=obtener_ruta_logo(),
+            usuario=st.session_state["usuario"]
+        )
+
+        if accion == "cerrar":
+            cerrar_sesion()
+
+    else:
+        # Un módulo abierto, con botón para volver al panel
+        boton_volver()
+        MODULOS[pagina]()
 
 else:
     # Si no hay sesión iniciada, mostrar login
