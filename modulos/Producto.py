@@ -1,4 +1,3 @@
-
 import streamlit as st
 import pandas as pd
 
@@ -11,6 +10,30 @@ from modulos import productos_service as servicio
 
 ROLES_PUEDEN_VER = (1, 2, 3, 4)
 ROLES_PUEDEN_GESTIONAR = (2,)
+
+
+# -----------------------------------
+# REGLA DE VENTA DEL PRODUCTO
+# -----------------------------------
+# Lo mas pequeno que se puede vender de un producto.
+OPCIONES_VENTA = {
+    "Solo unidades enteras (1, 2, 3...)": 1.0,
+    "Medias (0.5, 1, 1.5...)": 0.5,
+    "Hasta cuartos (0.25, 0.5, 0.75...)": 0.25,
+}
+
+TEXTO_REGLA = {
+    1.0: "Enteras",
+    0.5: "Medias",
+    0.25: "Cuartos",
+}
+
+
+def texto_regla(valor):
+    try:
+        return TEXTO_REGLA.get(float(valor), str(valor))
+    except (TypeError, ValueError):
+        return "Enteras"
 
 
 def render():
@@ -83,13 +106,18 @@ def render():
                     "Abreviatura": "Abreviatura"
                 })
 
+                df["Se vende en"] = df["Incremento_venta"].apply(
+                    texto_regla
+                )
+
                 columnas = [
                     "ID",
                     "Producto",
                     "Descripción",
                     "Categoría",
                     "Unidad de medida",
-                    "Abreviatura"
+                    "Abreviatura",
+                    "Se vende en"
                 ]
 
                 st.dataframe(
@@ -153,6 +181,16 @@ def render():
                             list(opciones_uni.keys())
                         )
 
+                        regla = st.selectbox(
+                            "¿Cómo se vende este producto?",
+                            list(OPCIONES_VENTA.keys()),
+                            help=(
+                                "Define la cantidad mínima que se puede "
+                                "vender. Ejemplo: la crema en botella puede "
+                                "venderse por cuartos de botella."
+                            )
+                        )
+
                         guardar = st.form_submit_button(
                             "Registrar producto",
                             use_container_width=True
@@ -163,7 +201,8 @@ def render():
                                 nombre,
                                 descripcion,
                                 opciones_uni[unidad],
-                                opciones_cat[categoria]
+                                opciones_cat[categoria],
+                                OPCIONES_VENTA[regla]
                             )
 
                             st.success("Producto registrado correctamente.")
@@ -252,6 +291,25 @@ def render():
                                 index=list(opciones_uni.keys()).index(unidad_actual)
                             )
 
+                            reglas = list(OPCIONES_VENTA.keys())
+
+                            regla_actual = next(
+                                (
+                                    nombre
+                                    for nombre, valor in OPCIONES_VENTA.items()
+                                    if valor == float(
+                                        producto.get("Incremento_venta") or 1
+                                    )
+                                ),
+                                reglas[0]
+                            )
+
+                            nueva_regla = st.selectbox(
+                                "¿Cómo se vende este producto?",
+                                reglas,
+                                index=reglas.index(regla_actual)
+                            )
+
                             actualizar = st.form_submit_button(
                                 "Guardar cambios",
                                 use_container_width=True
@@ -264,7 +322,8 @@ def render():
                                     nuevo_nombre,
                                     nueva_descripcion,
                                     opciones_uni[nueva_unidad],
-                                    opciones_cat[nueva_categoria]
+                                    opciones_cat[nueva_categoria],
+                                    OPCIONES_VENTA[nueva_regla]
                                 )
 
                                 st.success("Producto actualizado correctamente.")
