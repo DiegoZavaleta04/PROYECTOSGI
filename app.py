@@ -110,30 +110,24 @@ def login():
 # ==============================
 # CARGA SEGURA DE MÓDULOS
 # ==============================
-def cargar_modulo(nombre_archivo, nombre_funcion):
-    """
-    Importa modulos/<nombre_archivo>.py y devuelve la función indicada.
-    Si el archivo o la función no existen (o tienen un error), devuelve
-    una función que muestra un aviso en pantalla, así la app NO se cae.
-    """
-    try:
-        modulo = importlib.import_module(f"modulos.{nombre_archivo}")
-        return getattr(modulo, nombre_funcion)
-    except Exception as error:
-        mensaje = (
-            f"No se pudo cargar modulos/{nombre_archivo}.py "
-            f"(función {nombre_funcion}): {error}"
-        )
+from config.panel import (
+    aplicar_estilo, mostrar_panel, boton_volver,
+    pagina_actual, modulo_permitido,
+)
 
-        def aviso():
-            st.warning(mensaje)
+aplicar_estilo()
+pagina = pagina_actual()
 
-        return aviso
-
-
-def mostrar_informacion():
-    st.header("Información del sistema")
-
+if pagina == "inicio":
+    if mostrar_panel() == "cerrar":
+        st.session_state.clear()
+        st.rerun()
+else:
+    if not modulo_permitido(pagina):
+        st.error("No tiene permisos para este módulo.")
+    else:
+        boton_volver()
+        ...   # aquí el código que ya tienen para abrir el módulo "pagina"
 
 # ==============================================================
 # >>>>>>>>>>  AQUÍ SE AGREGAN LOS NUEVOS MÓDULOS  <<<<<<<<<<
