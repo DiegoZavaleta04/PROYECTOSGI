@@ -1,3 +1,5 @@
+import re
+
 import pandas as pd
 import streamlit as st
 from config.conexion import obtener_conexion
@@ -7,12 +9,10 @@ from config.conexion import obtener_conexion
 # PERMISOS
 # ==============================
 # Clave de st.session_state donde guardas el rol al iniciar sesion.
-# Cambiala si en tu login se llama distinto.
 CLAVE_ROL = "id_rol"
 
 # Nombre del rol tal como esta en la tabla Rol (se compara sin importar
 # mayusculas o minusculas).
-# !! REVISA que coincida con tu tabla Rol (SELECT * FROM Rol;) !!
 ROL_ADMINISTRADOR = "administrador"
 
 # Estos roles pueden VER las sedes, pero no agregar ni modificar.
@@ -22,6 +22,26 @@ ROLES_SOLO_LECTURA = (
     "encargado tienda",
     "vendedor tienda",
 )
+
+# Valores de la columna Sede.tipo (enum de la base de datos)
+TIPOS_SEDE = ["CD", "TIENDA"]
+
+NOMBRES_TIPO = {
+    "CD": "Centro de distribución (CD)",
+    "TIENDA": "Tienda",
+}
+
+# Encabezados legibles para el listado
+ENCABEZADOS = {
+    "id_sede": "ID",
+    "nombre": "Nombre",
+    "direccion": "Dirección",
+    "telefono": "Teléfono",
+    "tipo": "Tipo",
+}
+
+# El telefono se guarda con 9 caracteres: 4 digitos, guion y 4 digitos
+PATRON_TELEFONO = re.compile(r"^\d{4}-\d{4}$")
 
 
 def consultar(consulta, parametros=()):
@@ -118,23 +138,21 @@ def puede_ver_sedes():
 # ==============================
 # FUNCIONES DE BASE DE DATOS
 # ==============================
-def obtener_sedes(busqueda=""):
+def obtener_sedes():
+    """Sedes con todos sus datos: (id, nombre, direccion, telefono, tipo)."""
     return consultar(
         """
-        SELECT id_sede, nombre
+        SELECT id_sede, nombre, direccion, telefono, tipo
         FROM Sede
-        WHERE nombre LIKE %s
         ORDER BY nombre
-        """,
-        (f"%{busqueda.strip()}%",)
+        """
     )
 
 
 def obtener_sedes_completas(busqueda=""):
     """
     Devuelve (columnas, filas) con TODAS las columnas de la tabla Sede,
-    sean cuales sean. Asi el listado muestra toda la informacion de la
-    sede sin tener que escribir cada columna a mano.
+    sean cuales sean, para mostrarlas en el listado.
     """
     conexion = None
     cursor = None
@@ -188,7 +206,43 @@ def nombre_repetido(nombre, id_sede=None):
     return len(filas) > 0
 
 
-def agregar_sede(nombre):
+def cantidad_empleados(id_sede):
+    """Cuantos empleados tiene asignados la sede."""
+    filas = consultar(
+        "SELECT COUNT(*) FROM USUARIO WHERE Id_sede = %s",
+        (id_sede,)
+    )
+
+    return int(filas[0][0]) if filas else 0
+
+
+def validar_sede(nombre, direccion, telefono, tipo):
+    """Devuelve un mensaje de error, o None si todo esta bien."""
+    if nombre == "":
+        return "El nombre de la sede es obligatorio."
+
+    if len(nombre) > 100:
+        return "El nombre admite máximo 100 caracteres."
+
+    if tipo not in TIPOS_SEDE:
+        return "Seleccione si la sede es un CD o una tienda."
+
+    if direccion == "":
+        return "La ubicación (dirección) de la sede es obligatoria."
+
+    if len(direccion) > 200:
+        return "La ubicación admite máximo 200 caracteres."
+
+    if telefono == "":
+        return "El teléfono de la sede es obligatorio."
+
+    if not PATRON_TELEFONO.match(telefono):
+        return "El teléfono debe tener el formato 0000-0000."
+
+    return None
+
+
+def agregar_sede(nombre, direccion, telefono, tipo):
     # Seguridad: aunque otra parte del codigo llame a esta funcion,
     # solo el administrador puede agregar sedes.
     if not es_administrador():
@@ -196,20 +250,30 @@ def agregar_sede(nombre):
         return False
 
     return ejecutar(
-        "INSERT INTO Sede (nombre) VALUES (%s)",
-        (nombre,)
+        """
+        INSERT INTO Sede (nombre, direccion, telefono, tipo)
+        VALUES (%s, %s, %s, %s)
+        """,
+        (nombre, direccion, telefono, tipo)
     )
 
 
-def modificar_sede(id_sede, nombre):
+def modificar_sede(id_sede, nombre, direccion, telefono, tipo):
     # Seguridad: solo el administrador puede modificar sedes.
     if not es_administrador():
         st.error("No tiene permiso para modificar sedes.")
         return False
 
     return ejecutar(
-        "UPDATE Sede SET nombre = %s WHERE id_sede = %s",
-        (nombre, id_sede)
+        """
+        UPDATE Sede
+        SET nombre = %s,
+            direccion = %s,
+            telefono = %s,
+            tipo = %s
+        WHERE id_sede = %s
+        """,
+        (nombre, direccion, telefono, tipo, id_sede)
     )
 
 
@@ -227,8 +291,10 @@ def mostrar_listado():
     columnas, sedes = obtener_sedes_completas(busqueda)
 
     if sedes:
-        # Nombres de columna legibles: "id_sede" -> "Id sede"
-        encabezados = [c.replace("_", " ").capitalize() for c in columnas]
+        encabezados = [
+            ENCABEZADOS.get(c.lower(), c.replace("_", " ").capitalize())
+            for c in columnas
+        ]
 
         tabla = pd.DataFrame(sedes, columns=encabezados)
 
@@ -241,6 +307,138 @@ def mostrar_listado():
         st.caption(f"Sedes encontradas: {len(sedes)}")
     else:
         st.info("No se encontraron sedes.")
+
+
+def mostrar_agregar():
+    # El numero cambia al guardar, para que el formulario quede vacio
+    n = st.session_state.get("sede_form_n", 0)
+
+    with st.form(f"form_agregar_sede_{n}"):
+        nombre = st.text_input(
+            "Nombre de la sede",
+            max_chars=100,
+            key=f"sede_nueva_nombre_{n}"
+        )
+
+        tipo = st.selectbox(
+            "Tipo de sede",
+            TIPOS_SEDE,
+            format_func=lambda t: NOMBRES_TIPO[t],
+            key=f"sede_nueva_tipo_{n}"
+        )
+
+        direccion = st.text_input(
+            "Ubicación (dirección)",
+            max_chars=200,
+            key=f"sede_nueva_direccion_{n}"
+        )
+
+        telefono = st.text_input(
+            "Teléfono",
+            max_chars=9,
+            placeholder="0000-0000",
+            key=f"sede_nueva_telefono_{n}"
+        )
+
+        guardar = st.form_submit_button("Guardar sede")
+
+    if guardar:
+        nombre = nombre.strip()
+        direccion = direccion.strip()
+        telefono = telefono.strip()
+
+        error = validar_sede(nombre, direccion, telefono, tipo)
+
+        if error:
+            st.warning(error)
+        elif nombre_repetido(nombre):
+            st.warning("Ya existe una sede con ese nombre.")
+        elif agregar_sede(nombre, direccion, telefono, tipo):
+            st.session_state["sede_form_n"] = n + 1
+            st.session_state["mensaje_sede"] = (
+                f"Sede '{nombre}' registrada correctamente."
+            )
+            st.rerun()
+
+
+def mostrar_modificar():
+    todas = obtener_sedes()
+
+    if not todas:
+        st.info("Aún no hay sedes para modificar.")
+        return
+
+    sede = st.selectbox(
+        "Sede a modificar",
+        todas,
+        format_func=lambda s: f"{s[0]} - {s[1]}",
+        key="sede_a_modificar"
+    )
+
+    id_sede = sede[0]
+
+    # Las claves dependen del id para que los campos se actualicen
+    # al cambiar de sede en el selector.
+    nombre = st.text_input(
+        "Nombre",
+        value=sede[1],
+        max_chars=100,
+        key=f"sede_nombre_{id_sede}"
+    )
+
+    tipo = st.selectbox(
+        "Tipo de sede",
+        TIPOS_SEDE,
+        index=TIPOS_SEDE.index(sede[4]) if sede[4] in TIPOS_SEDE else 0,
+        format_func=lambda t: NOMBRES_TIPO[t],
+        key=f"sede_tipo_{id_sede}"
+    )
+
+    direccion = st.text_input(
+        "Ubicación (dirección)",
+        value=sede[2],
+        max_chars=200,
+        key=f"sede_direccion_{id_sede}"
+    )
+
+    telefono = st.text_input(
+        "Teléfono",
+        value=sede[3],
+        max_chars=9,
+        placeholder="0000-0000",
+        key=f"sede_telefono_{id_sede}"
+    )
+
+    if st.button("Guardar cambios", key="guardar_cambios_sede"):
+        nombre = nombre.strip()
+        direccion = direccion.strip()
+        telefono = telefono.strip()
+
+        error = validar_sede(nombre, direccion, telefono, tipo)
+
+        if error:
+            st.warning(error)
+        elif (
+            nombre == sede[1]
+            and direccion == sede[2]
+            and telefono == sede[3]
+            and tipo == sede[4]
+        ):
+            st.info("No hay cambios que guardar.")
+        elif nombre_repetido(nombre, id_sede):
+            st.warning("Ya existe otra sede con ese nombre.")
+        elif tipo != sede[4] and cantidad_empleados(id_sede) > 0:
+            # Los roles de los empleados dependen del tipo de sede
+            st.warning(
+                "No se puede cambiar el tipo de una sede que tiene "
+                "empleados asignados. Primero pase a esos empleados a "
+                "otra sede."
+            )
+        elif modificar_sede(id_sede, nombre, direccion, telefono, tipo):
+            st.session_state["mensaje_sede"] = (
+                "Sede actualizada correctamente."
+            )
+            st.rerun()
 
 
 def mostrar_sedes():
@@ -265,70 +463,11 @@ def mostrar_sedes():
         ["Listado", "Agregar sede", "Modificar sede"]
     )
 
-    # -----------------------------------
-    # LISTADO
-    # -----------------------------------
     with tab_listado:
         mostrar_listado()
 
-    # -----------------------------------
-    # AGREGAR
-    # -----------------------------------
     with tab_agregar:
-        with st.form("form_agregar_sede", clear_on_submit=True):
-            nombre_nuevo = st.text_input("Nombre de la sede")
+        mostrar_agregar()
 
-            guardar = st.form_submit_button("Guardar sede")
-
-        if guardar:
-            nombre_nuevo = nombre_nuevo.strip()
-
-            if not nombre_nuevo:
-                st.warning("El nombre de la sede es obligatorio.")
-            elif nombre_repetido(nombre_nuevo):
-                st.warning("Ya existe una sede con ese nombre.")
-            elif agregar_sede(nombre_nuevo):
-                st.session_state["mensaje_sede"] = (
-                    f"Sede '{nombre_nuevo}' registrada correctamente."
-                )
-                st.rerun()
-
-    # -----------------------------------
-    # MODIFICAR
-    # -----------------------------------
     with tab_modificar:
-        todas = obtener_sedes()
-
-        if not todas:
-            st.info("Aún no hay sedes para modificar.")
-            return
-
-        sede = st.selectbox(
-            "Sede a modificar",
-            todas,
-            format_func=lambda s: f"{s[0]} - {s[1]}",
-            key="sede_a_modificar"
-        )
-
-        # La clave depende del id para que el campo se actualice
-        # al cambiar de sede en el selector.
-        nombre_editado = st.text_input(
-            "Nuevo nombre",
-            value=sede[1],
-            key=f"sede_nombre_{sede[0]}"
-        )
-
-        if st.button("Guardar cambios", key="guardar_cambios_sede"):
-            nombre_editado = nombre_editado.strip()
-
-            if not nombre_editado:
-                st.warning("El nombre de la sede es obligatorio.")
-            elif nombre_editado == sede[1]:
-                st.info("No hay cambios que guardar.")
-            elif nombre_repetido(nombre_editado, sede[0]):
-                st.warning("Ya existe otra sede con ese nombre.")
-            elif modificar_sede(sede[0], nombre_editado):
-                st.session_state["mensaje_sede"] = (
-                    "Sede actualizada correctamente."
-                )
-                st.rerun()
+        mostrar_modificar()
