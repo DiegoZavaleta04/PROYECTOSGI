@@ -177,13 +177,13 @@ def mostrar_encabezado(ruta_logo=None, usuario=""):
     with col_logo:
         # Primero el logo que indique app.py; si no, assets/logo.*
         if ruta_logo and os.path.exists(ruta_logo):
-            st.image(ruta_logo, width=150)
+            st.image(ruta_logo, width=120)
         else:
             for nombre in NOMBRES_LOGO:
                 ruta = CARPETA_ASSETS / nombre
 
                 if ruta.exists():
-                    st.image(str(ruta), width=150)
+                    st.image(str(ruta), width=120)
                     break
 
     with col_titulo:
