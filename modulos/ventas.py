@@ -16,9 +16,9 @@ CLAVE_ROL = "id_rol"
 # El Administrador (5) no puede vender ni ver las ventas.
 ROLES_VENDEN = (1, 2, 3, 4)
 
-# Roles que pueden venderle a una TIENDA de la red (solo el CD).
-# Esas ventas llevan el precio que calcula el sistema.
-ROLES_VENDEN_A_TIENDAS = (1, 3)
+# La venta a una TIENDA de la red solo puede hacerse desde el CD: se
+# decide por el tipo de la sede del usuario (Sede.Tipo = 'CD'), no por el
+# numero de rol. Esas ventas llevan el precio que calcula el sistema.
 
 METODOS_PAGO = ["Efectivo", "Tarjeta", "Transferencia"]
 
@@ -608,8 +608,16 @@ def mostrar_venta():
     nombre_vendedor = f"{usuario[1]} {usuario[2]}"
     nombre_sede = obtener_nombre_sede(id_sede)
 
-    # Solo el CD puede venderle a una tienda de la red
-    puede_a_tiendas = id_rol in ROLES_VENDEN_A_TIENDAS
+    # Solo el CD puede venderle a una tienda de la red. Se decide por el
+    # tipo de la sede del usuario (CD), no por el numero de rol.
+    filas_tipo = consultar(
+        f"SELECT Tipo FROM {T_SEDE} WHERE id_sede = %s",
+        (id_sede,)
+    )
+    puede_a_tiendas = (
+        bool(filas_tipo)
+        and str(filas_tipo[0][0]).strip().upper() == "CD"
+    )
 
     # Mensaje guardado antes de recargar la pagina
     mensaje = st.session_state.pop("mensaje_venta", None)
