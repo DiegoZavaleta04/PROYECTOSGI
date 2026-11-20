@@ -19,6 +19,13 @@ ROLES_CON_ACCESO = (
     "vendedor tienda",
 )
 
+# Roles que pueden ver el inventario de TODAS las sedes (vision global
+# del Centro de Distribucion). Los demas solo ven el de su propia sede.
+# Para que tambien lo vea el vendedor del CD, agreguen "vendedor cd".
+ROLES_VEN_TODAS_LAS_SEDES = (
+    "encargado cd",
+)
+
 # El rol Administrador NO aparece: no tiene acceso al inventario.
 
 TIPOS_MOVIMIENTO = ["Todos", "Entrada", "Salida"]
@@ -83,6 +90,22 @@ def obtener_sede_usuario():
     return None
 
 
+def puede_ver_todas_las_sedes():
+    return obtener_nombre_rol() in ROLES_VEN_TODAS_LAS_SEDES
+
+
+def sede_a_consultar(id_elegida, sede_usuario):
+    """
+    Seguridad: solo los roles autorizados pueden consultar otra sede o
+    todas (None). Cualquier otro rol consulta siempre la suya, aunque
+    la pantalla enviara otro valor.
+    """
+    if puede_ver_todas_las_sedes():
+        return id_elegida
+
+    return sede_usuario
+
+
 # ==============================
 # FUNCIONES DE BASE DE DATOS
 # ==============================
@@ -95,36 +118,50 @@ def obtener_nombre_sede(id_sede):
     return filas[0][0] if filas else None
 
 
+def obtener_sedes():
+    return consultar(
+        "SELECT id_sede, nombre FROM Sede ORDER BY nombre"
+    )
+
+
 def obtener_inventario(id_sede, busqueda=""):
-    """Existencias de la sede indicada, nunca de otra."""
+    """
+    Existencias de la sede indicada. Con id_sede = None devuelve las de
+    todas las sedes (solo para los roles autorizados).
+    """
     return consultar(
         """
         SELECT
             p.Id_producto,
             p.Nombre,
             i.Existencia,
-            u.Abreviatura
+            u.Abreviatura,
+            s.nombre
         FROM INVENTARIO i
         INNER JOIN PRODUCTOS p
             ON i.Id_producto = p.Id_producto
         INNER JOIN UNIDAD_MEDIDA u
             ON p.Id_unidad = u.Id_unidad
-        WHERE i.Id_sede = %s
+        INNER JOIN Sede s
+            ON i.Id_sede = s.id_sede
+        WHERE (%s IS NULL OR i.Id_sede = %s)
           AND p.Nombre LIKE %s
-        ORDER BY p.Nombre
+        ORDER BY s.nombre, p.Nombre
         """,
-        (id_sede, f"%{busqueda.strip()}%")
+        (id_sede, id_sede, f"%{busqueda.strip()}%")
     )
 
 
 def obtener_movimientos(id_sede, desde, hasta, busqueda="", tipo="Todos"):
     """
-    Entradas (compras) y salidas (ventas) de la sede indicada, unidas
-    en una sola lista. Las salidas llevan la cantidad en negativo.
+    Entradas (compras) y salidas (ventas) de la sede indicada (o de todas
+    con id_sede = None), unidas en una sola lista. Las salidas llevan la
+    cantidad en negativo.
     """
     return consultar(
         """
-        SELECT Fecha, Tipo, Documento, Producto, Cantidad, Unidad, Usuario
+        SELECT Fecha, Tipo, Documento, Producto, Cantidad, Unidad,
+               Usuario, Sede
         FROM (
             SELECT
                 c.Fecha AS Fecha,
@@ -134,7 +171,8 @@ def obtener_movimientos(id_sede, desde, hasta, busqueda="", tipo="Todos"):
                 p.Nombre AS Producto,
                 d.Cantidad AS Cantidad,
                 COALESCE(ud.Abreviatura, ub.Abreviatura) AS Unidad,
-                CONCAT(u.Nombre, ' ', u.Apellido) AS Usuario
+                CONCAT(u.Nombre, ' ', u.Apellido) AS Usuario,
+                sd.nombre AS Sede
             FROM DETALLE_COMPRA d
             INNER JOIN COMPRAS c
                 ON d.Id_compra = c.Id_compra
@@ -146,7 +184,9 @@ def obtener_movimientos(id_sede, desde, hasta, busqueda="", tipo="Todos"):
                 ON d.Id_unidad = ud.Id_unidad
             INNER JOIN USUARIO u
                 ON c.Id_usuario = u.Id_usuario
-            WHERE c.Id_sede = %s
+            INNER JOIN Sede sd
+                ON c.Id_sede = sd.id_sede
+            WHERE (%s IS NULL OR c.Id_sede = %s)
 
             UNION ALL
 
@@ -158,7 +198,8 @@ def obtener_movimientos(id_sede, desde, hasta, busqueda="", tipo="Todos"):
                 p.Nombre AS Producto,
                 -d.Cantidad AS Cantidad,
                 COALESCE(ud.Abreviatura, ub.Abreviatura) AS Unidad,
-                CONCAT(u.Nombre, ' ', u.Apellido) AS Usuario
+                CONCAT(u.Nombre, ' ', u.Apellido) AS Usuario,
+                sd.nombre AS Sede
             FROM DETALLE_VENTA d
             INNER JOIN VENTAS v
                 ON d.Id_venta = v.Id_venta
@@ -170,7 +211,9 @@ def obtener_movimientos(id_sede, desde, hasta, busqueda="", tipo="Todos"):
                 ON d.Id_unidad = ud.Id_unidad
             INNER JOIN USUARIO u
                 ON v.Id_usuario = u.Id_usuario
-            WHERE v.Id_sede = %s
+            INNER JOIN Sede sd
+                ON v.Id_sede = sd.id_sede
+            WHERE (%s IS NULL OR v.Id_sede = %s)
         ) m
         WHERE m.Fecha BETWEEN %s AND %s
           AND m.Producto LIKE %s
@@ -178,6 +221,8 @@ def obtener_movimientos(id_sede, desde, hasta, busqueda="", tipo="Todos"):
         ORDER BY m.Fecha DESC, m.Id_doc DESC, m.Producto
         """,
         (
+            id_sede,
+            id_sede,
             id_sede,
             id_sede,
             desde,
@@ -192,35 +237,58 @@ def obtener_movimientos(id_sede, desde, hasta, busqueda="", tipo="Todos"):
 # ==============================
 # PANTALLA DEL MODULO
 # ==============================
-def mostrar_existencias(sede_usuario, nombre_sede):
-    col1, col2 = st.columns([2, 1])
+def elegir_sede(sede_usuario):
+    """
+    Selector de sede, solo para los roles que ven todas las sedes.
+    Devuelve el id elegido (None = todas las sedes).
+    """
+    sedes = obtener_sedes()
 
-    with col1:
-        busqueda = st.text_input(
-            "Buscar producto",
-            placeholder="Nombre del producto",
-            key="inventario_busqueda"
-        )
+    opciones = [(None, "Todas las sedes")] + [
+        (s[0], s[1]) for s in sedes
+    ]
 
-    with col2:
-        # Fijo: cada usuario solo ve el inventario de su sede
-        st.text_input(
-            "Sede",
-            value=nombre_sede,
-            disabled=True,
-            key="inventario_sede"
-        )
+    # Al abrir, aparece seleccionada la sede del propio usuario
+    indice = next(
+        (i for i, o in enumerate(opciones) if o[0] == sede_usuario),
+        0
+    )
 
-    filas = obtener_inventario(sede_usuario, busqueda)
+    elegida = st.selectbox(
+        "Ver el inventario de",
+        opciones,
+        index=indice,
+        format_func=lambda o: o[1],
+        key="inventario_sede_elegida"
+    )
+
+    return elegida[0]
+
+
+def mostrar_existencias(id_sede_consulta):
+    busqueda = st.text_input(
+        "Buscar producto",
+        placeholder="Nombre del producto",
+        key="inventario_busqueda"
+    )
+
+    filas = obtener_inventario(id_sede_consulta, busqueda)
 
     if not filas:
         st.info("No se encontraron productos en el inventario.")
         return
 
-    tabla = pd.DataFrame(
-        [(f[0], f[1], float(f[2]), f[3]) for f in filas],
-        columns=["ID", "Producto", "Existencia", "Unidad"]
-    )
+    if id_sede_consulta is None:
+        # Todas las sedes: se agrega la columna Sede
+        tabla = pd.DataFrame(
+            [(f[4], f[0], f[1], float(f[2]), f[3]) for f in filas],
+            columns=["Sede", "ID", "Producto", "Existencia", "Unidad"]
+        )
+    else:
+        tabla = pd.DataFrame(
+            [(f[0], f[1], float(f[2]), f[3]) for f in filas],
+            columns=["ID", "Producto", "Existencia", "Unidad"]
+        )
 
     st.dataframe(
         tabla,
@@ -235,7 +303,7 @@ def mostrar_existencias(sede_usuario, nombre_sede):
     )
 
 
-def mostrar_movimientos(sede_usuario):
+def mostrar_movimientos(id_sede_consulta):
     col1, col2, col3 = st.columns([2, 2, 1])
 
     with col1:
@@ -267,7 +335,7 @@ def mostrar_movimientos(sede_usuario):
     desde, hasta = rango
 
     filas = obtener_movimientos(
-        sede_usuario,
+        id_sede_consulta,
         desde,
         hasta,
         busqueda,
@@ -278,21 +346,40 @@ def mostrar_movimientos(sede_usuario):
         st.info("No se encontraron movimientos en ese período.")
         return
 
-    tabla = pd.DataFrame(
-        [
-            (f[0], f[1], f[2], f[3], float(f[4]), f[5], f[6])
-            for f in filas
-        ],
-        columns=[
-            "Fecha",
-            "Tipo",
-            "Documento",
-            "Producto",
-            "Cantidad",
-            "Unidad",
-            "Registrado por"
-        ]
-    )
+    if id_sede_consulta is None:
+        # Todas las sedes: se agrega la columna Sede
+        tabla = pd.DataFrame(
+            [
+                (f[7], f[0], f[1], f[2], f[3], float(f[4]), f[5], f[6])
+                for f in filas
+            ],
+            columns=[
+                "Sede",
+                "Fecha",
+                "Tipo",
+                "Documento",
+                "Producto",
+                "Cantidad",
+                "Unidad",
+                "Registrado por"
+            ]
+        )
+    else:
+        tabla = pd.DataFrame(
+            [
+                (f[0], f[1], f[2], f[3], float(f[4]), f[5], f[6])
+                for f in filas
+            ],
+            columns=[
+                "Fecha",
+                "Tipo",
+                "Documento",
+                "Producto",
+                "Cantidad",
+                "Unidad",
+                "Registrado por"
+            ]
+        )
 
     st.dataframe(
         tabla,
@@ -324,12 +411,28 @@ def mostrar_inventario():
         st.warning("No se encontró la sede del usuario.")
         return
 
+    # ---- Que sede se consulta ----
+    if puede_ver_todas_las_sedes():
+        # Vision global: el usuario elige una sede o todas
+        id_elegida = elegir_sede(sede_usuario)
+    else:
+        # Sede fija: cada usuario solo ve el inventario de la suya
+        st.text_input(
+            "Sede",
+            value=nombre_sede,
+            disabled=True,
+            key="inventario_sede"
+        )
+        id_elegida = sede_usuario
+
+    id_sede_consulta = sede_a_consultar(id_elegida, sede_usuario)
+
     tab_existencias, tab_movimientos = st.tabs(
         ["Existencias", "Movimientos"]
     )
 
     with tab_existencias:
-        mostrar_existencias(sede_usuario, nombre_sede)
+        mostrar_existencias(id_sede_consulta)
 
     with tab_movimientos:
-        mostrar_movimientos(sede_usuario)
+        mostrar_movimientos(id_sede_consulta)
