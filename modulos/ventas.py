@@ -1,6 +1,7 @@
 import pandas as pd
 import streamlit as st
 from config.conexion import obtener_conexion
+from config.precios_cd import evaluar_precio_cd
 
 
 # ==============================
@@ -14,6 +15,10 @@ CLAVE_ROL = "id_rol"
 # 1 Encargado CD, 2 Encargado tienda, 3 Vendedor CD, 4 Vendedor tienda.
 # El Administrador (5) no puede vender ni ver las ventas.
 ROLES_VENDEN = (1, 2, 3, 4)
+
+# Roles que pueden venderle a una TIENDA de la red (solo el CD).
+# Esas ventas llevan el precio que calcula el sistema.
+ROLES_VENDEN_A_TIENDAS = (1, 3)
 
 METODOS_PAGO = ["Efectivo", "Tarjeta", "Transferencia"]
 
@@ -31,6 +36,11 @@ T_DETALLE_VENTA = "DETALLE_VENTA"
 # Columnas del DUI y del NIT en la tabla de clientes (revisa en phpMyAdmin)
 C_CLIENTE_DUI = "DUI"
 C_CLIENTE_NIT = "NIT"
+
+# Columna de CLIENTE que dice a que tienda de la red representa el cliente
+# (NULL en los clientes normales). Hay que agregarla a la tabla:
+#   ALTER TABLE CLIENTE ADD COLUMN Id_tienda INT NULL;
+C_CLIENTE_TIENDA = "Id_tienda"
 
 
 # ==============================
@@ -89,6 +99,18 @@ def obtener_nombre_sede(id_sede):
     return filas[0][0] if filas else ""
 
 
+def obtener_tiendas():
+    """Las tiendas de la red (sedes de tipo TIENDA)."""
+    return consultar(
+        f"""
+        SELECT id_sede, nombre
+        FROM {T_SEDE}
+        WHERE Tipo = 'TIENDA'
+        ORDER BY nombre
+        """
+    )
+
+
 def obtener_productos(id_sede):
     """Solo los productos con existencia en el inventario de la sede."""
     return consultar(
@@ -141,13 +163,128 @@ def obtener_ventas_recientes(id_sede):
     )
 
 
+def obtener_o_crear_cliente(cursor, id_sede, nombre, dui, nit, telefono):
+    """
+    Cliente normal. Si ya existe un cliente con ese DUI (o NIT) en la
+    sede, se reutiliza; si no, se crea uno nuevo. Devuelve su Id.
+    """
+    fila = None
+
+    if dui:
+        cursor.execute(
+            f"""
+            SELECT Id_cliente
+            FROM {T_CLIENTE}
+            WHERE {C_CLIENTE_DUI} = %s AND Id_sede = %s
+            LIMIT 1
+            """,
+            (dui, id_sede)
+        )
+        fila = cursor.fetchone()
+
+    if fila is None and nit:
+        cursor.execute(
+            f"""
+            SELECT Id_cliente
+            FROM {T_CLIENTE}
+            WHERE {C_CLIENTE_NIT} = %s AND Id_sede = %s
+            LIMIT 1
+            """,
+            (nit, id_sede)
+        )
+        fila = cursor.fetchone()
+
+    if fila is None and not dui and not nit:
+        # Sin documentos: se reutiliza un cliente con el mismo
+        # nombre que tampoco tenga documentos
+        cursor.execute(
+            f"""
+            SELECT Id_cliente
+            FROM {T_CLIENTE}
+            WHERE Nombre = %s
+              AND ({C_CLIENTE_DUI} IS NULL OR {C_CLIENTE_DUI} = '')
+              AND ({C_CLIENTE_NIT} IS NULL OR {C_CLIENTE_NIT} = '')
+              AND {C_CLIENTE_TIENDA} IS NULL
+              AND Id_sede = %s
+            LIMIT 1
+            """,
+            (nombre, id_sede)
+        )
+        fila = cursor.fetchone()
+
+    if fila:
+        id_cliente = fila[0]
+        cursor.execute(
+            f"""
+            UPDATE {T_CLIENTE}
+            SET Nombre = %s,
+                Telefono = COALESCE(%s, Telefono),
+                {C_CLIENTE_DUI} = COALESCE(%s, {C_CLIENTE_DUI}),
+                {C_CLIENTE_NIT} = COALESCE(%s, {C_CLIENTE_NIT})
+            WHERE Id_cliente = %s
+            """,
+            (nombre, telefono, dui, nit, id_cliente)
+        )
+        return id_cliente
+
+    cursor.execute(
+        f"""
+        INSERT INTO {T_CLIENTE}
+        (Nombre, {C_CLIENTE_DUI}, {C_CLIENTE_NIT}, Telefono, Id_sede)
+        VALUES (%s, %s, %s, %s, %s)
+        """,
+        (nombre, dui, nit, telefono, id_sede)
+    )
+
+    return cursor.lastrowid
+
+
+def obtener_o_crear_cliente_tienda(
+    cursor,
+    id_sede,
+    id_tienda,
+    nombre_tienda,
+    telefono_tienda
+):
+    """
+    Cliente que representa a una tienda de la red. Se reutiliza el que ya
+    exista para esa tienda; si no, se crea. Devuelve su Id.
+    """
+    cursor.execute(
+        f"""
+        SELECT Id_cliente
+        FROM {T_CLIENTE}
+        WHERE {C_CLIENTE_TIENDA} = %s
+        LIMIT 1
+        """,
+        (id_tienda,)
+    )
+
+    fila = cursor.fetchone()
+
+    if fila:
+        return fila[0]
+
+    cursor.execute(
+        f"""
+        INSERT INTO {T_CLIENTE}
+        (Nombre, Telefono, Id_sede, {C_CLIENTE_TIENDA})
+        VALUES (%s, %s, %s, %s)
+        """,
+        (nombre_tienda, telefono_tienda, id_sede, id_tienda)
+    )
+
+    return cursor.lastrowid
+
+
 def registrar_venta(
     fecha,
     id_usuario,
     id_sede,
     metodo_pago,
     datos_cliente,
-    lineas
+    lineas,
+    id_tienda=None
 ):
     """
     Guarda el cliente, la venta, su detalle y descuenta el inventario
@@ -157,6 +294,12 @@ def registrar_venta(
     datos_cliente = (nombre, dui, nit, telefono)
     El DUI, el NIT y el telefono son opcionales. Si ya existe un cliente
     con ese DUI (o NIT) en la sede, se reutiliza; si no, se crea uno nuevo.
+
+    id_tienda: si no es None, es una venta del CD a esa tienda. En ese
+    caso el precio de cada linea lo fija el sistema (costo del CD mas
+    margen operativo) y solo se permite si es menor que el de los
+    proveedores de la tienda.
+
     Devuelve el Id de la venta, o None si hubo error.
     """
     nombre, dui, nit, telefono = datos_cliente
@@ -194,73 +337,69 @@ def registrar_venta(
                     f"{texto_incremento(incremento, linea['abreviatura'])}."
                 )
 
-        # ---- Cliente: reutilizar si ya existe, o crearlo ----
-        fila = None
+        # ---- Venta del CD a una tienda: origen, destino y precios ----
+        fila_destino = None
 
-        if dui:
+        if id_tienda is not None:
             cursor.execute(
-                f"""
-                SELECT Id_cliente
-                FROM {T_CLIENTE}
-                WHERE {C_CLIENTE_DUI} = %s AND Id_sede = %s
-                LIMIT 1
-                """,
-                (dui, id_sede)
+                f"SELECT Tipo FROM {T_SEDE} WHERE id_sede = %s",
+                (id_sede,)
             )
-            fila = cursor.fetchone()
+            fila_origen = cursor.fetchone()
 
-        if fila is None and nit:
+            if not fila_origen or str(fila_origen[0]).upper() != "CD":
+                raise ValueError(
+                    "Solo el Centro de Distribución puede venderle "
+                    "a una tienda."
+                )
+
             cursor.execute(
-                f"""
-                SELECT Id_cliente
-                FROM {T_CLIENTE}
-                WHERE {C_CLIENTE_NIT} = %s AND Id_sede = %s
-                LIMIT 1
-                """,
-                (nit, id_sede)
+                f"SELECT Tipo, nombre, Telefono FROM {T_SEDE} "
+                "WHERE id_sede = %s",
+                (id_tienda,)
             )
-            fila = cursor.fetchone()
+            fila_destino = cursor.fetchone()
 
-        if fila is None and not dui and not nit:
-            # Sin documentos: se reutiliza un cliente con el mismo
-            # nombre que tampoco tenga documentos
-            cursor.execute(
-                f"""
-                SELECT Id_cliente
-                FROM {T_CLIENTE}
-                WHERE Nombre = %s
-                  AND ({C_CLIENTE_DUI} IS NULL OR {C_CLIENTE_DUI} = '')
-                  AND ({C_CLIENTE_NIT} IS NULL OR {C_CLIENTE_NIT} = '')
-                  AND Id_sede = %s
-                LIMIT 1
-                """,
-                (nombre, id_sede)
-            )
-            fila = cursor.fetchone()
+            if not fila_destino or str(fila_destino[0]).upper() != "TIENDA":
+                raise ValueError(
+                    "La sede de destino debe ser una tienda."
+                )
 
-        if fila:
-            id_cliente = fila[0]
-            cursor.execute(
-                f"""
-                UPDATE {T_CLIENTE}
-                SET Nombre = %s,
-                    Telefono = COALESCE(%s, Telefono),
-                    {C_CLIENTE_DUI} = COALESCE(%s, {C_CLIENTE_DUI}),
-                    {C_CLIENTE_NIT} = COALESCE(%s, {C_CLIENTE_NIT})
-                WHERE Id_cliente = %s
-                """,
-                (nombre, telefono, dui, nit, id_cliente)
+            # El precio lo fija el sistema, nunca lo escribe el usuario
+            lineas = [dict(linea) for linea in lineas]
+
+            for linea in lineas:
+                evaluacion = evaluar_precio_cd(
+                    linea["id_producto"],
+                    id_tienda,
+                    cursor
+                )
+
+                if not evaluacion["permitido"]:
+                    raise ValueError(
+                        f"{linea['producto']}: {evaluacion['mensaje']}"
+                    )
+
+                linea["precio"] = float(evaluacion["precio_cd"])
+
+        # ---- Cliente ----
+        if id_tienda is not None:
+            id_cliente = obtener_o_crear_cliente_tienda(
+                cursor,
+                id_sede,
+                id_tienda,
+                fila_destino[1],
+                fila_destino[2]
             )
         else:
-            cursor.execute(
-                f"""
-                INSERT INTO {T_CLIENTE}
-                (Nombre, {C_CLIENTE_DUI}, {C_CLIENTE_NIT}, Telefono, Id_sede)
-                VALUES (%s, %s, %s, %s, %s)
-                """,
-                (nombre, dui, nit, telefono, id_sede)
+            id_cliente = obtener_o_crear_cliente(
+                cursor,
+                id_sede,
+                nombre,
+                dui,
+                nit,
+                telefono
             )
-            id_cliente = cursor.lastrowid
 
         # ---- Venta (siempre asociada a la sede del usuario) ----
         cursor.execute(
@@ -469,6 +608,9 @@ def mostrar_venta():
     nombre_vendedor = f"{usuario[1]} {usuario[2]}"
     nombre_sede = obtener_nombre_sede(id_sede)
 
+    # Solo el CD puede venderle a una tienda de la red
+    puede_a_tiendas = id_rol in ROLES_VENDEN_A_TIENDAS
+
     # Mensaje guardado antes de recargar la pagina
     mensaje = st.session_state.pop("mensaje_venta", None)
     if mensaje:
@@ -505,35 +647,87 @@ def mostrar_venta():
     # -----------------------------------
     st.subheader("Datos del cliente")
 
-    col1, col2, col3, col4 = st.columns([2, 1, 1, 1])
+    es_tienda = False
+    id_tienda = None
+    nombre_tienda = ""
 
-    with col1:
-        cliente_nombre = st.text_input(
-            "Nombre del cliente",
-            max_chars=100,
-            key="venta_cli_nombre"
+    if puede_a_tiendas:
+        tipo_venta = st.radio(
+            "Tipo de venta",
+            ["Cliente", "Tienda de la red"],
+            horizontal=True,
+            key="venta_tipo_cliente"
+        )
+        es_tienda = tipo_venta == "Tienda de la red"
+
+    if es_tienda:
+        tiendas = obtener_tiendas()
+
+        if not tiendas:
+            st.warning("No hay tiendas registradas.")
+            st.divider()
+            mostrar_ventas_recientes(id_sede)
+            return
+
+        tienda = st.selectbox(
+            "Tienda que compra",
+            tiendas,
+            format_func=lambda t: t[1],
+            key="venta_tienda"
         )
 
-    with col2:
-        cliente_dui = st.text_input(
-            "DUI (opcional)",
-            max_chars=10,
-            key="venta_cli_dui"
+        id_tienda = tienda[0]
+        nombre_tienda = tienda[1]
+
+        st.caption(
+            "El precio lo calcula el sistema: costo del CD más el margen "
+            "operativo. Solo se vende si es menor que el de los "
+            "proveedores de la tienda."
         )
 
-    with col3:
-        cliente_nit = st.text_input(
-            "NIT (opcional)",
-            max_chars=17,
-            key="venta_cli_nit"
-        )
+        cliente_nombre = ""
+        cliente_dui = ""
+        cliente_nit = ""
+        cliente_tel = ""
 
-    with col4:
-        cliente_tel = st.text_input(
-            "Teléfono (opcional)",
-            max_chars=20,
-            key="venta_cli_tel"
-        )
+    else:
+        col1, col2, col3, col4 = st.columns([2, 1, 1, 1])
+
+        with col1:
+            cliente_nombre = st.text_input(
+                "Nombre del cliente",
+                max_chars=100,
+                key="venta_cli_nombre"
+            )
+
+        with col2:
+            cliente_dui = st.text_input(
+                "DUI (opcional)",
+                max_chars=10,
+                key="venta_cli_dui"
+            )
+
+        with col3:
+            cliente_nit = st.text_input(
+                "NIT (opcional)",
+                max_chars=17,
+                key="venta_cli_nit"
+            )
+
+        with col4:
+            cliente_tel = st.text_input(
+                "Teléfono (opcional)",
+                max_chars=20,
+                key="venta_cli_tel"
+            )
+
+    # Si cambia el destino (cliente o tienda), el detalle se reinicia,
+    # porque los precios de una tienda no sirven para otro destino
+    destino = ("tienda", id_tienda) if es_tienda else ("cliente", None)
+
+    if st.session_state.get("venta_destino") != destino:
+        st.session_state["lineas_venta"] = []
+        st.session_state["venta_destino"] = destino
 
     # -----------------------------------
     # DATOS DE LA VENTA
@@ -602,13 +796,45 @@ def mostrar_venta():
         f"{texto_incremento(incremento, producto[2])}."
     )
 
+    evaluacion = None
+
     with colpr:
-        precio = st.number_input(
-            "Precio unitario ($)",
-            min_value=0.0,
-            step=0.05,
-            format="%.2f"
-        )
+        if es_tienda:
+            # Precio fijado por el sistema (no se puede escribir)
+            evaluacion = evaluar_precio_cd(producto[0], id_tienda)
+            precio_cd = evaluacion["precio_cd"]
+
+            st.text_input(
+                "Precio unitario ($)",
+                value=str(precio_cd) if precio_cd is not None else "-",
+                disabled=True,
+                key=f"venta_precio_cd_{producto[0]}_{id_tienda}"
+            )
+
+            precio = float(precio_cd) if precio_cd is not None else 0.0
+        else:
+            precio = st.number_input(
+                "Precio unitario ($)",
+                min_value=0.0,
+                step=0.05,
+                format="%.2f"
+            )
+
+    if es_tienda and evaluacion is not None:
+        if evaluacion["permitido"]:
+            st.success(evaluacion["mensaje"])
+        else:
+            st.error(evaluacion["mensaje"])
+
+        if evaluacion["costo_cd"] is not None:
+            referencia = evaluacion["precio_referencia"]
+
+            st.caption(
+                f"Costo del CD: ${evaluacion['costo_cd']:,.4f} | "
+                f"Precio a la tienda: ${evaluacion['precio_cd']} | "
+                "Mejor precio de la tienda: "
+                f"{'$' + str(referencia) if referencia is not None else 'sin referencia'}"
+            )
 
     if st.button("Agregar al detalle"):
         lineas = st.session_state["lineas_venta"]
@@ -624,7 +850,9 @@ def mostrar_venta():
         ya_agregado = existente["cantidad"] if existente else 0
         disponible = existencias[producto[0]] - ya_agregado
 
-        if cantidad <= 0:
+        if es_tienda and not evaluacion["permitido"]:
+            st.warning(evaluacion["mensaje"])
+        elif cantidad <= 0:
             st.warning("La cantidad debe ser mayor que 0.")
         elif not cantidad_valida(cantidad, incremento):
             st.warning(
@@ -717,22 +945,36 @@ def mostrar_venta():
         nit_cli = cliente_nit.strip()
         tel_cli = cliente_tel.strip()
 
-        if nombre_cli == "":
+        if es_tienda and id_tienda is None:
+            st.warning(
+                "Debe seleccionar la tienda."
+            )
+        elif not es_tienda and nombre_cli == "":
             st.warning(
                 "Debe ingresar el nombre del cliente."
             )
-        elif dui_cli != "" and not documento_valido(dui_cli, 10):
+        elif (
+            not es_tienda
+            and dui_cli != ""
+            and not documento_valido(dui_cli, 10)
+        ):
             st.warning(
                 "El DUI solo puede tener números y guiones "
                 "(máximo 10 caracteres)."
             )
-        elif nit_cli != "" and not documento_valido(nit_cli, 17):
+        elif (
+            not es_tienda
+            and nit_cli != ""
+            and not documento_valido(nit_cli, 17)
+        ):
             st.warning(
                 "El NIT solo puede tener números y guiones "
                 "(máximo 17 caracteres)."
             )
-        elif tel_cli != "" and not all(
-            c.isdigit() or c in " +-()" for c in tel_cli
+        elif (
+            not es_tienda
+            and tel_cli != ""
+            and not all(c.isdigit() or c in " +-()" for c in tel_cli)
         ):
             st.warning(
                 "El teléfono solo puede tener números, "
@@ -758,7 +1000,8 @@ def mostrar_venta():
                     nit_cli or None,
                     tel_cli or None
                 ),
-                lineas
+                lineas,
+                id_tienda=id_tienda if es_tienda else None
             )
 
             if id_venta:
@@ -768,9 +1011,14 @@ def mostrar_venta():
                 )
                 st.session_state["lineas_venta"] = []
                 st.session_state["limpiar_cliente_venta"] = True
+
+                destino_texto = (
+                    f" a la tienda {nombre_tienda}" if es_tienda else ""
+                )
+
                 st.session_state["mensaje_venta"] = (
-                    f"Venta #{id_venta} registrada correctamente. "
-                    f"Total: ${total:,.2f}"
+                    f"Venta #{id_venta}{destino_texto} registrada "
+                    f"correctamente. Total: ${total:,.2f}"
                 )
                 st.rerun()
 
