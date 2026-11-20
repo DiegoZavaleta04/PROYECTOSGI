@@ -398,7 +398,6 @@ def mostrar_movimientos(id_sede_consulta):
 
 def mostrar_inventario():
     st.header("Inventario")
-    st.caption(f"PRUEBA | rol: {obtener_nombre_rol()} | ve todas: {puede_ver_todas_las_sedes()}")
 
     sede_usuario = obtener_sede_usuario()
 
