@@ -221,7 +221,7 @@ PERMISOS_MODULOS = {
     "Inventario": (1, 2, 3, 4),
     "Compras": (1, 3),
     "Sedes": (1, 2, 3, 4, 5),
-    "Informes": (1,3,5),
+    "Informes": (1,2,5),
     "Información": (1, 2, 3, 4),
 }
 
