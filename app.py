@@ -177,7 +177,7 @@ MODULOS = {
     "Sedes": cargar_modulo ("sedes", "mostrar_sedes"),
     "Informes": cargar_modulo("Informes", "mostrar_informes"),
     # "Clientes": cargar_modulo("Clientes", "mostrar_cliente"),
-    "Información": mostrar_informacion,
+   #"Información": mostrar_informacion,
 }
 
 
