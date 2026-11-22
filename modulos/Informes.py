@@ -10,10 +10,13 @@ from config.conexion import obtener_conexion
 # CONFIGURACION
 # ==============================
 CLAVE_ROL = "id_rol"
+CLAVE_SEDE = "id_sede"
 
-# Nombre del rol tal como esta en la tabla Rol (sin importar mayusculas).
-# Solo el administrador puede ver los informes.
-ROL_ADMINISTRADOR = "administrador"
+# Roles que ven TODAS las sedes (Encargado CD y Administrador)
+ROLES_COMPLETO = (1, 5)
+
+# Roles que solo ven SU sede (la de su usuario)
+ROLES_UNA_SEDE = (3,)
 
 # Cuantos productos se muestran en los rankings
 TOP_PRODUCTOS = 10
@@ -56,29 +59,14 @@ def consultar(consulta, parametros=()):
             conexion.close()
 
 
-def obtener_nombre_rol():
-    """Devuelve el nombre del rol del usuario (en minusculas), o None."""
-    id_rol = st.session_state.get(CLAVE_ROL)
-
-    if id_rol is None:
-        return None
-
-    clave = f"_nombre_rol_{id_rol}"
-
-    if clave not in st.session_state:
-        filas = consultar(
-            "SELECT Nombre FROM Rol WHERE Id_rol = %s",
-            (id_rol,)
-        )
-        st.session_state[clave] = (
-            filas[0][0].strip().lower() if filas else None
-        )
-
-    return st.session_state[clave]
+def tiene_acceso():
+    """True si el rol del usuario puede entrar a los informes."""
+    return st.session_state.get(CLAVE_ROL) in ROLES_COMPLETO + ROLES_UNA_SEDE
 
 
-def es_administrador():
-    return obtener_nombre_rol() == ROL_ADMINISTRADOR
+def ve_solo_su_sede():
+    """True si el rol del usuario solo puede ver los datos de su sede."""
+    return st.session_state.get(CLAVE_ROL) in ROLES_UNA_SEDE
 
 
 def a_dataframe(filas, columnas, decimales=(), enteras=()):
@@ -778,10 +766,23 @@ def mostrar_sede(fila, v, compras_p, inv):
 def mostrar_informes():
     st.header("Informes gerenciales")
 
-    # Solo el administrador entra a este modulo
-    if not es_administrador():
+    # Solo los roles 1, 3 y 5 entran a este modulo
+    if not tiene_acceso():
         st.error("No tiene permisos para ver los informes.")
         return
+
+    # El rol 3 solo ve su sede: se necesita saber cual es
+    solo_su_sede = ve_solo_su_sede()
+    mi_sede = None
+
+    if solo_su_sede:
+        mi_sede = st.session_state.get(CLAVE_SEDE)
+
+        if mi_sede is None:
+            st.error("Su usuario no tiene una sede asignada.")
+            return
+
+        mi_sede = int(mi_sede)
 
     hoy = date.today()
 
@@ -809,14 +810,25 @@ def mostrar_informes():
     desde, hasta = rango
 
     sedes = cargar_sedes()
-
-    if sedes.empty:
-        st.warning("No hay sedes registradas.")
-        return
-
     ventas = cargar_ventas(desde, hasta)
     compras = cargar_compras()
     inventario = cargar_inventario()
+
+    # Rol 3: se recorta todo a su sede ANTES de calcular.
+    # Las compras NO se recortan: se necesitan completas para el costo
+    # promedio (preparar() ya las separa por sede, y el resumen solo
+    # incluye las sedes que quedaron en `sedes`).
+    if solo_su_sede:
+        sedes = sedes[sedes["id_sede"] == mi_sede]
+        ventas = ventas[ventas["id_sede"] == mi_sede]
+        inventario = inventario[inventario["id_sede"] == mi_sede]
+
+    if sedes.empty:
+        if solo_su_sede:
+            st.warning("No se encontró la sede asignada a su usuario.")
+        else:
+            st.warning("No hay sedes registradas.")
+        return
 
     v, compras_p, inv, resumen = preparar(
         sedes, ventas, compras, inventario, desde, hasta
@@ -829,6 +841,20 @@ def mostrar_informes():
         "(salarios, alquiler, servicios)."
     )
 
+    # Rol 3: directo al informe de su sede, sin balance general ni pestañas
+    if solo_su_sede:
+        fila = resumen.iloc[0]
+        st.subheader(fila["sede"])
+
+        mostrar_sede(
+            fila,
+            v[v["id_sede"] == mi_sede],
+            compras_p[compras_p["id_sede"] == mi_sede],
+            inv[inv["id_sede"] == mi_sede]
+        )
+        return
+
+    # Roles 1 y 5: balance general + una pestaña por sede
     nombres = ["Balance general"] + resumen["sede"].tolist()
     pestanas = st.tabs(nombres)
 
