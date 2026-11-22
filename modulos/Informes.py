@@ -16,7 +16,7 @@ CLAVE_SEDE = "id_sede"
 ROLES_COMPLETO = (1, 5)
 
 # Roles que solo ven SU sede (la de su usuario)
-ROLES_UNA_SEDE = (3,)
+ROLES_UNA_SEDE = (2,)
 
 # Cuantos productos se muestran en los rankings
 TOP_PRODUCTOS = 10
