@@ -219,9 +219,9 @@ PERMISOS_MODULOS = {
     "Proveedores": (1, 2, 3, 4),
     "Empleados": (1, 2, 5),
     "Inventario": (1, 2, 3, 4),
-    "Compras": (1, 2, 3, 4),
+    "Compras": (1, 3),
     "Sedes": (1, 2, 3, 4, 5),
-    "Informes": (5,),
+    "Informes": (1,3,5),
     "Información": (1, 2, 3, 4),
 }
 
