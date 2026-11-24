@@ -118,6 +118,26 @@ def obtener_proveedores(id_sede):
     )
 
 
+def obtener_precios_proveedor(id_proveedor):
+    """
+    Devuelve {Id_producto: Precio_ofrecido} con los productos que el
+    proveedor ya ha suministrado (tabla PRODUCTO_PROVEEDOR).
+    """
+    filas = consultar(
+        """
+        SELECT Id_producto, Precio_ofrecido
+        FROM PRODUCTO_PROVEEDOR
+        WHERE Id_proveedor = %s
+        """,
+        (id_proveedor,)
+    )
+
+    return {
+        fila[0]: (float(fila[1]) if fila[1] is not None else None)
+        for fila in filas
+    }
+
+
 def obtener_sedes(id_sede):
     return consultar(
         """
@@ -671,14 +691,68 @@ def mostrar_compra():
 
     st.markdown("**Productos de la compra**")
 
+    # Productos que ya provee este proveedor y su ultimo precio
+    precios_proveedor = obtener_precios_proveedor(proveedor[0])
+
+    productos_proveedor = [
+        p for p in productos if p[0] in precios_proveedor
+    ]
+    productos_otros = [
+        p for p in productos if p[0] not in precios_proveedor
+    ]
+
+    OPCION_PROPIOS = "Productos de este proveedor"
+    OPCION_OTROS = "Agregar otro producto a este proveedor"
+
+    opciones_origen = []
+
+    if productos_proveedor:
+        opciones_origen.append(OPCION_PROPIOS)
+
+    if productos_otros:
+        opciones_origen.append(OPCION_OTROS)
+
+    if not productos_proveedor:
+        st.info(
+            f"{proveedor[1]} todavía no tiene productos asociados. "
+            "Elija uno de la lista; quedará asociado a este proveedor "
+            "al registrar la compra."
+        )
+
+    if len(opciones_origen) > 1:
+        origen = st.radio(
+            "¿Qué producto va a comprar?",
+            opciones_origen,
+            horizontal=True,
+            key=f"compra_origen_{proveedor[0]}"
+        )
+    else:
+        origen = opciones_origen[0]
+
+    lista_productos = (
+        productos_proveedor if origen == OPCION_PROPIOS else productos_otros
+    )
+
+    def etiqueta_producto(p):
+        texto = f"{p[0]} - {p[1]} ({p[2]})"
+        precio = precios_proveedor.get(p[0])
+
+        if precio is not None:
+            texto += f" · último precio ${precio:,.4f}"
+
+        return texto
+
     producto = st.selectbox(
         "Producto",
-        productos,
-        format_func=lambda p: f"{p[0]} - {p[1]} ({p[2]})",
-        key="compra_producto"
+        lista_productos,
+        format_func=etiqueta_producto,
+        key=f"compra_producto_{proveedor[0]}_{origen == OPCION_PROPIOS}"
     )
 
     unidad_producto = producto[2]
+
+    # Precio de referencia (por unidad de venta) de este proveedor
+    precio_sugerido = precios_proveedor.get(producto[0])
     es_libra = str(unidad_producto).strip().lower() in UNIDADES_LIBRA
 
     # =================================
@@ -742,6 +816,23 @@ def mostrar_compra():
         etiqueta_cantidad = f"Cantidad ({unidad_producto})"
         etiqueta_precio = f"Precio por {unidad_producto} ($)"
 
+    # El precio se propone segun el ultimo precio que ofrecio el proveedor,
+    # multiplicado por la presentacion (quintal, caja...). Se puede cambiar.
+    if precio_sugerido is not None:
+        precio_inicial = round(precio_sugerido * float(factor), 2)
+
+        st.caption(
+            f"Precio de referencia de {proveedor[1]}: "
+            f"${precio_sugerido:,.4f} por {unidad_producto}"
+            + (
+                f" (${precio_inicial:,.2f} por esta presentación)"
+                if factor != 1 else ""
+            )
+            + ". Puede modificarlo si el precio cambió."
+        )
+    else:
+        precio_inicial = 0.0
+
     col1, col2 = st.columns(2)
 
     with col1:
@@ -759,10 +850,13 @@ def mostrar_compra():
         precio_presentacion = st.number_input(
             etiqueta_precio,
             min_value=0.0,
-            value=0.0,
+            value=float(precio_inicial),
             step=0.05,
             format="%.2f",
-            key=f"compra_precio_{clave}"
+            key=(
+                f"compra_precio_{clave}_{proveedor[0]}_"
+                f"{producto[0]}_{float(factor)}"
+            )
         )
 
     # Conversion a la unidad de venta
