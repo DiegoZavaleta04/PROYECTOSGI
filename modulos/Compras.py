@@ -333,7 +333,54 @@ def registrar_compra(
                     linea["precio"]
                 )
             )
+             # Relacion producto-proveedor: se crea o se actualiza con el
+            # precio y la fecha de esta compra
+            cursor.execute(
+                """
+                SELECT 1
+                FROM PRODUCTO_PROVEEDOR
+                WHERE Id_producto = %s
+                  AND Id_proveedor = %s
+                LIMIT 1
+                """,
+                (linea["id_producto"], id_proveedor)
+            )
 
+            if cursor.fetchone():
+                cursor.execute(
+                    """
+                    UPDATE PRODUCTO_PROVEEDOR
+                    SET Precio_ofrecido = %s,
+                        Fecha_actualizacion = %s
+                    WHERE Id_producto = %s
+                      AND Id_proveedor = %s
+                    """,
+                    (
+                        linea["precio"],
+                        fecha,
+                        linea["id_producto"],
+                        id_proveedor
+                    )
+                )
+            else:
+                cursor.execute(
+                    """
+                    INSERT INTO PRODUCTO_PROVEEDOR
+                    (
+                        Id_producto,
+                        Id_proveedor,
+                        Precio_ofrecido,
+                        Fecha_actualizacion
+                    )
+                    VALUES (%s, %s, %s, %s)
+                    """,
+                    (
+                        linea["id_producto"],
+                        id_proveedor,
+                        linea["precio"],
+                        fecha
+                    )
+                )
             # Buscar inventario del producto en la sede
             cursor.execute(
                 """
